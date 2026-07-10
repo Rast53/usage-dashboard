@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Usage · raclaw</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --card: #121821;
+    --border: #243041;
+    --text: #e6edf3;
+    --muted: #8b9bb0;
+    --accent: #6cb6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --chip: #1a2330;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: radial-gradient(1200px 600px at 20% -10%, #152033 0%, var(--bg) 55%);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 18px 48px; }
+  header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
+  h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: 14px; margin-top: 6px; }
+  .actions { display: flex; gap: 8px; }
+  button {
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 12px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .card {
+    background: color-mix(in srgb, var(--card) 92%, black);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+  }
+  .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .v { font-size: 22px; font-weight: 650; margin-top: 6px; }
+  .muted { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; font-size: 14px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--chip); border: 1px solid var(--border);
+    border-radius: 999px; padding: 2px 8px; font-size: 12px; color: var(--muted);
+  }
+  .ok { color: var(--green); }
+  .bad { color: var(--red); }
+  .warn { color: var(--yellow); }
+  .spark {
+    display: flex; gap: 2px; align-items: end; height: 28px;
+  }
+  .spark i {
+    display: block; width: 5px; border-radius: 2px 2px 0 0;
+    background: #3d6ea8; min-height: 2px;
+  }
+  .spark i.fail { background: #a33b3b; }
+  .note {
+    margin-top: 14px; color: var(--muted); font-size: 13px; line-height: 1.45;
+  }
+  .err {
+    margin: 12px 0; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid rgba(248,81,73,.35); background: rgba(248,81,73,.08); color: #ffb4af;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Usage Dashboard</h1>
+        <div class="sub">CPA / multi-account · start with Grok · later OpenRouter / Codex / others</div>
+      </div>
+      <div class="actions">
+        <button onclick="refresh(true)">Refresh</button>
+        <button onclick="load()">Reload</button>
+      </div>
+    </header>
+
+    <div id="errors"></div>
+
+    <div class="grid" id="stats"></div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px;">
+        <div>
+          <div class="k">Accounts</div>
+          <div class="muted" id="updated" style="margin-top:4px;font-size:13px;">—</div>
+        </div>
+        <span class="chip" id="sourceChip">source: cpa</span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Account</th>
+              <th>Status</th>
+              <th>Req</th>
+              <th>Tokens</th>
+              <th>Recent</th>
+              <th>Models</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="note" id="notes"></div>
+    </div>
+  </div>
+
+<script>
+function fmt(n) {
+  n = Number(n || 0);
+  if (n >= 1_000_000) return (n/1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n/1_000).toFixed(1) + 'k';
+  return String(n);
+}
+function statusClass(s) {
+  if (!s) return 'warn';
+  s = String(s).toLowerCase();
+  if (s === 'active') return 'ok';
+  if (s.includes('fail') || s.includes('error') || s.includes('disable')) return 'bad';
+  return 'warn';
+}
+function spark(recent) {
+  if (!recent || !recent.length) return '<span class="muted">—</span>';
+  const max = Math.max(1, ...recent.map(x => (x.success||0) + (x.failed||0)));
+  return '<div class="spark">' + recent.map(x => {
+    const total = (x.success||0) + (x.failed||0);
+    const h = Math.max(2, Math.round((total / max) * 28));
+    const cls = (x.failed||0) > 0 ? 'fail' : '';
+    return `<i class="${cls}" style="height:${h}px" title="${x.time}: ok ${x.success||0}, fail ${x.failed||0}"></i>`;
+  }).join('') + '</div>';
+}
+async function refresh(force=false) {
+  if (force) await fetch('/api/refresh', { method: 'POST' });
+  await load();
+}
+async function load() {
+  const res = await fetch('/api/summary');
+  const data = await res.json();
+  document.getElementById('updated').textContent = 'updated: ' + (data.updated_at || '—');
+  const errs = data.errors || [];
+  document.getElementById('errors').innerHTML = errs.map(e => `<div class="err">${e}</div>`).join('');
+  document.getElementById('notes').innerHTML = (data.notes || []).map(n => `• ${n}`).join('<br/>');
+
+  const accounts = data.accounts || [];
+  const active = accounts.filter(a => a.status === 'active' && !a.disabled).length;
+  const tokens = accounts.reduce((s,a)=>s+(a.tokens_total||0),0);
+  const success = accounts.reduce((s,a)=>s+(a.success||0),0);
+  const failed = accounts.reduce((s,a)=>s+(a.failed||0),0);
+  const providers = Object.keys((data.providers?.cpa?.stats_by_provider) || {});
+  document.getElementById('stats').innerHTML = `
+    <div class="card"><div class="k">Accounts</div><div class="v">${accounts.length}</div><div class="muted">${active} active</div></div>
+    <div class="card"><div class="k">Success</div><div class="v">${fmt(success)}</div><div class="muted">CPA counters</div></div>
+    <div class="card"><div class="k">Failed</div><div class="v">${fmt(failed)}</div><div class="muted">CPA counters</div></div>
+    <div class="card"><div class="k">Tokens (queue)</div><div class="v">${fmt(tokens)}</div><div class="muted">recent usage-queue</div></div>
+    <div class="card"><div class="k">Providers</div><div class="v">${providers.length || 1}</div><div class="muted">${providers.join(', ') || 'cpa'}</div></div>
+  `;
+
+  const rows = accounts.map(a => {
+    const st = `<span class="${statusClass(a.status)}">${a.status || '?'}</span>${a.disabled ? ' · disabled' : ''}`;
+    const req = `${fmt(a.success)} <span class="muted">ok</span> / ${fmt(a.failed)} <span class="muted">fail</span>`;
+    const tok = `${fmt(a.tokens_total)} <div class="muted" style="font-size:12px">in ${fmt(a.tokens_in)} · out ${fmt(a.tokens_out)} · ${a.requests||0} req / ${a.window_hours||24}h</div>`;
+    const models = (a.models||[]).length
+      ? (a.models||[]).slice(0,4).map(m=>{
+          const st=(a.model_stats||[]).find(x=>x.model===m);
+          const title = st ? `${m}: ${st.requests} req, ${fmt(st.tokens_total)} tok` : m;
+          return `<span class="chip" title="${title}">${m}</span>`;
+        }).join(' ')
+      : '<span class="muted">—</span>';
+    return `<tr>
+      <td><code>${a.provider}</code></td>
+      <td><div>${a.email}</div><div class="muted" style="font-size:12px">${a.account_type || ''}${a.last_seen ? ' · last ' + a.last_seen : ''}</div></td>
+      <td>${st}</td>
+      <td>${req}</td>
+      <td>${tok}</td>
+      <td>${spark(a.recent_requests)}</td>
+      <td>${models}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('rows').innerHTML = rows || '<tr><td colspan="7" class="muted">No accounts</td></tr>';
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
