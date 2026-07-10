@@ -314,6 +314,49 @@ function toggleDetails(id) {
   el.setAttribute('data-expanded', expanded ? 'false' : 'true');
 }
 
+/* ── Stats row ── */
+function renderStats(data) {
+  const accounts = (data.accounts || []).filter(function(a) {
+    return a.provider !== 'deepseek' && a.provider !== 'openrouter' && a.provider !== 'zai';
+  });
+  const wallets = data.wallets || {};
+  const allItems = accounts.slice();
+  if (wallets.zai) allItems.push(wallets.zai);
+  if (wallets.deepseek) allItems.push(wallets.deepseek);
+  if (wallets.openrouter) allItems.push(wallets.openrouter);
+
+  let active = 0, attention = 0, blocked = 0, tokens = 0;
+  allItems.forEach(function(item) {
+    const st = classify(item);
+    if (st === 'ok') active++;
+    else if (st === 'warn') attention++;
+    else if (st === 'critical') { attention++; blocked++; }
+    if (item.tokens_total) tokens += item.tokens_total;
+  });
+
+  // Spend 24h: DeepSeek + OpenRouter
+  let spendParts = [];
+  const ds = wallets.deepseek || {};
+  const dsSpend = ds.spend_24h || {};
+  if (dsSpend.spent != null) spendParts.push('¥' + money(dsSpend.spent));
+  const or = wallets.openrouter || {};
+  const orSpend = or.spend_24h || {};
+  if (orSpend.spent != null) spendParts.push('$' + money(orSpend.spent));
+  const spendStr = spendParts.length ? spendParts.join(' + ') : '—';
+
+  const attSub = blocked > 0
+    ? (blocked + ' заблокирован' + (attention > blocked ? ' · ' + (attention - blocked) + ' лимит' : ''))
+    : (attention > 0 ? attention + ' лимит' : 'всё нормально');
+
+  const statClass = attention > 0 ? 'critical' : '';
+
+  document.getElementById('stats').innerHTML =
+    '<div class="stat-card"><div class="stat-k">Расход 24ч</div><div class="stat-v">' + spendStr + '</div><div class="stat-sub">DeepSeek + OpenRouter</div></div>' +
+    '<div class="stat-card"><div class="stat-k">Активных</div><div class="stat-v ok-text">' + active + '</div><div class="stat-sub">из ' + allItems.length + ' провайдеров</div></div>' +
+    '<div class="stat-card ' + statClass + '"><div class="stat-k">Требует внимания</div><div class="stat-v ' + (attention > 0 ? 'bad-text' : '') + '">' + attention + '</div><div class="stat-sub">' + attSub + '</div></div>' +
+    '<div class="stat-card"><div class="stat-k">Токены 24ч</div><div class="stat-v">' + fmt(tokens) + '</div><div class="stat-sub">по CPA аккаунтам</div></div>';
+}
+
 /* ── Load / Refresh ── */
 async function refresh() {
   try { await fetch('/api/refresh', { method: 'POST' }); } catch(e) {}
@@ -332,7 +375,7 @@ async function load() {
   }).join('');
 
   // Renderers filled in by later tasks
-  document.getElementById('stats').innerHTML = '<div class="muted">stats…</div>';
+  renderStats(data);
   document.getElementById('providers').innerHTML = '<div class="muted">providers…</div>';
   document.getElementById('accounts').innerHTML = '<div class="muted">accounts…</div>';
 }
