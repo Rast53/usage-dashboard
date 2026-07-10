@@ -376,6 +376,65 @@ def fetch_grok_credits(token: str, proxy: str | None = None) -> dict[str, Any]:
     }
 
 
+def get_deepseek_api_key() -> str | None:
+    """Get DeepSeek API key: env DEEPSEEK_API_KEY > openclaw.json apiKey field."""
+    key = os.environ.get("DEEPSEEK_API_KEY")
+    if key and len(key) > 10:
+        return key
+    try:
+        oc = json.loads(Path("/root/.openclaw/openclaw.json").read_text())
+        ds = oc.get("models", {}).get("providers", {}).get("deepseek", {})
+        ak = ds.get("apiKey")
+        if isinstance(ak, str) and len(ak) > 10:
+            return ak
+        if isinstance(ak, dict) and ak.get("source") == "env":
+            return os.environ.get(ak.get("id", "DEEPSEEK_API_KEY"), "")
+    except Exception:
+        pass
+    return None
+
+
+def probe_deepseek_balance() -> dict[str, Any]:
+    """Fetch DeepSeek account balance from /user/balance."""
+    key = get_deepseek_api_key()
+    result: dict[str, Any] = {
+        "provider": "deepseek",
+        "email": "deepseek-main",
+        "probed_at": now_iso(),
+        "ok": False,
+        "kind": "deepseek-balance",
+        "balance": [],
+        "is_available": False,
+        "error": None,
+    }
+    if not key:
+        result["error"] = "DEEPSEEK_API_KEY not set"
+        return result
+
+    st, hdrs, data, err = http_json(
+        "https://api.deepseek.com/user/balance",
+        token=key,
+        timeout=15.0,
+    )
+    if st != 200 or not isinstance(data, dict):
+        result["error"] = f"balance API: {st} {err or data}".strip()
+        return result
+
+    result["ok"] = bool(data.get("is_available", False))
+    result["balance"] = data.get("balance_infos", [])
+    result["is_available"] = bool(data.get("is_available", False))
+
+    lines = []
+    for b in result["balance"]:
+        cur = b.get("currency", "?")
+        total = b.get("total_balance", "0")
+        topped = b.get("topped_up_balance", "0")
+        lines.append(f"{cur} {total} (topped_up {topped})")
+    result["remaining_summary"] = " \u00b7 ".join(lines) if lines else "no balance info"
+    result["reset_summary"] = ""
+    return result
+
+
 def load_auth_file(path_hint: str | None, email: str | None) -> dict[str, Any] | None:
     candidates: list[Path] = []
     if path_hint:
@@ -695,7 +754,7 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
     usage_by_source, usage_errors = fetch_usage_from_pg()
     errors.extend(usage_errors)
 
-    # quota probe cache
+    # quota probe cache (xAI + DeepSeek)
     with _quota_lock:
         global _quota_cache
         need_probe = force_quota
@@ -712,11 +771,24 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
                         need_probe = True
                 except Exception:
                     need_probe = True
-        if need_probe and files:
+        if need_probe:
+            # xAI probe
+            if files:
+                try:
+                    _quota_cache = probe_all_xai(files)
+                except Exception as e:
+                    errors.append(f"xai-quota-probe: {e}")
+            # DeepSeek balance probe
             try:
-                _quota_cache = probe_all_xai(files)
+                ds_accounts = dict((_quota_cache or {}).get("accounts") or {})
+                ds_result = probe_deepseek_balance()
+                if ds_result is not None:
+                    ds_accounts["deepseek-main"] = ds_result
+                _quota_cache["accounts"] = ds_accounts
+                _quota_cache["updated_at"] = now_iso()
+                save_json(QUOTA_CACHE_PATH, _quota_cache)
             except Exception as e:
-                errors.append(f"quota-probe: {e}")
+                errors.append(f"deepseek-balance-probe: {e}")
         quota_accounts = dict((_quota_cache or {}).get("accounts") or {})
 
     accounts: list[dict[str, Any]] = []
@@ -812,6 +884,43 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             "quota": None,
             "source": "pg-usage-only",
         })
+
+    # Synthesize DeepSeek account (not from CPA, from env/openclaw.json)
+    ds_quota = quota_accounts.get("deepseek-main") if quota_accounts else None
+    if ds_quota:
+        accounts.append({
+            "provider": "deepseek",
+            "email": "deepseek-main",
+            "name": "DeepSeek API",
+            "status": "active" if ds_quota.get("ok") else "error",
+            "status_message": ds_quota.get("error") or "",
+            "disabled": False,
+            "unavailable": False,
+            "next_retry_after": None,
+            "account_type": "direct-api",
+            "success": 0,
+            "failed": 0,
+            "recent_success": 0,
+            "recent_failed": 0,
+            "recent_requests": [],
+            "last_refresh": None,
+            "last_seen": None,
+            "requests": 0,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "tokens_total": 0,
+            "reasoning_tokens": 0,
+            "cached_tokens": 0,
+            "models": [],
+            "model_stats": [],
+            "window_hours": USAGE_WINDOW_HOURS,
+            "quota": ds_quota,
+            "source": "deepseek-balance-api",
+        })
+        ps = provider_stats["deepseek"]
+        ps["accounts"] += 1
+        if ds_quota.get("ok"):
+            ps["active"] += 1
 
     accounts.sort(key=lambda a: (
         0 if a.get("unavailable") or (a.get("quota") or {}).get("team_blocked") else 1,

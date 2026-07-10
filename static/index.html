@@ -231,6 +231,28 @@ function quotaCell(a) {
     }
     return '<span class="muted">—</span>';
   }
+
+  // DeepSeek balance display
+  if (q.kind === 'deepseek-balance') {
+    const balances = q.balance || [];
+    const ok = q.ok;
+    const badge = ok ? '<span class="pill ok">OK</span>' : '<span class="pill bad">ERR</span>';
+    let main;
+    if (!ok) {
+      main = '<span class="bad">' + (q.error || 'ошибка') + '</span>';
+    } else if (balances.length === 0) {
+      main = '<span class="muted">нет данных</span>';
+    } else {
+      main = balances.map(function(b) {
+        const total = b.total_balance || '0';
+        const topped = b.topped_up_balance || '0';
+        var sym = b.currency === 'CNY' ? '¥' : '$';
+        return '<span class="quota-main">' + sym + Number(total).toFixed(2) + '</span><div class="quota-sub">' + b.currency + ' · topped ' + sym + Number(topped).toFixed(2) + '</div>';
+      }).join('<div style="margin:6px 0"></div>');
+    }
+    return badge + '<div style="margin-top:6px">' + main + '</div>';
+  }
+
   const credits = q.credits || {};
   const blocked = !!q.team_blocked || a.unavailable || (credits.used_percent != null && credits.used_percent >= 100);
   const creditRem = credits.remaining_percent;
