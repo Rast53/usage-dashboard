@@ -25,7 +25,7 @@
     color: var(--text);
     min-height: 100vh;
   }
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 18px 48px; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 28px 18px 48px; }
   header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
   h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.02em; }
   .sub { color: var(--muted); font-size: 14px; margin-top: 6px; }
@@ -60,17 +60,20 @@
   .ok { color: var(--green); }
   .bad { color: var(--red); }
   .warn { color: var(--yellow); }
-  .spark {
-    display: flex; gap: 2px; align-items: end; height: 28px;
-  }
+  .spark { display: flex; gap: 2px; align-items: end; height: 28px; }
   .spark i {
     display: block; width: 5px; border-radius: 2px 2px 0 0;
     background: #3d6ea8; min-height: 2px;
   }
   .spark i.fail { background: #a33b3b; }
-  .note {
-    margin-top: 14px; color: var(--muted); font-size: 13px; line-height: 1.45;
+  .bar {
+    width: 100%; max-width: 160px; height: 8px; border-radius: 999px;
+    background: #1c2633; overflow: hidden; margin-top: 6px;
   }
+  .bar > span { display:block; height:100%; background: linear-gradient(90deg,#3fb950,#6cb6ff); }
+  .bar.bad > span { background: #f85149; }
+  .bar.warn > span { background: #d29922; }
+  .note { margin-top: 14px; color: var(--muted); font-size: 13px; line-height: 1.45; }
   .err {
     margin: 12px 0; padding: 10px 12px; border-radius: 10px;
     border: 1px solid rgba(248,81,73,.35); background: rgba(248,81,73,.08); color: #ffb4af;
@@ -83,16 +86,15 @@
     <header>
       <div>
         <h1>Usage Dashboard</h1>
-        <div class="sub">CPA / multi-account · start with Grok · later OpenRouter / Codex / others</div>
+        <div class="sub">CPA multi-account · remaining/reset signals · tokens/models from durable history</div>
       </div>
       <div class="actions">
-        <button onclick="refresh(true)">Refresh</button>
+        <button onclick="refresh(true)">Refresh + probe</button>
         <button onclick="load()">Reload</button>
       </div>
     </header>
 
     <div id="errors"></div>
-
     <div class="grid" id="stats"></div>
 
     <div class="card">
@@ -101,7 +103,7 @@
           <div class="k">Accounts</div>
           <div class="muted" id="updated" style="margin-top:4px;font-size:13px;">—</div>
         </div>
-        <span class="chip" id="sourceChip">source: cpa</span>
+        <span class="chip" id="sourceChip">source: cpa + pg + xai probe</span>
       </div>
       <div style="overflow-x:auto;">
         <table>
@@ -110,6 +112,7 @@
               <th>Provider</th>
               <th>Account</th>
               <th>Status</th>
+              <th>Remaining / Reset</th>
               <th>Req</th>
               <th>Tokens</th>
               <th>Recent</th>
@@ -126,11 +129,12 @@
 <script>
 function fmt(n) {
   n = Number(n || 0);
-  if (n >= 1_000_000) return (n/1_000_000).toFixed(1) + 'M';
-  if (n >= 1_000) return (n/1_000).toFixed(1) + 'k';
+  if (Math.abs(n) >= 1_000_000) return (n/1_000_000).toFixed(1) + 'M';
+  if (Math.abs(n) >= 1_000) return (n/1_000).toFixed(1) + 'k';
   return String(n);
 }
-function statusClass(s) {
+function statusClass(s, blocked) {
+  if (blocked) return 'bad';
   if (!s) return 'warn';
   s = String(s).toLowerCase();
   if (s === 'active') return 'ok';
@@ -147,6 +151,32 @@ function spark(recent) {
     return `<i class="${cls}" style="height:${h}px" title="${x.time}: ok ${x.success||0}, fail ${x.failed||0}"></i>`;
   }).join('') + '</div>';
 }
+function quotaCell(a) {
+  const q = a.quota;
+  if (!q) {
+    if (a.next_retry_after) {
+      return `<div class="warn">cooldown</div><div class="muted" style="font-size:12px">retry ${a.next_retry_after}</div>`;
+    }
+    return '<span class="muted">—</span>';
+  }
+  const blocked = !!q.team_blocked || a.unavailable;
+  const rate = q.rate || {};
+  const remTok = rate.remaining_tokens;
+  const limTok = rate.limit_tokens;
+  const pct = rate.remaining_tokens_pct;
+  const barCls = blocked ? 'bad' : (pct != null && pct < 15 ? 'warn' : '');
+  const width = blocked ? 0 : (pct != null ? Math.max(0, Math.min(100, pct)) : 100);
+  const remText = q.remaining_summary || (remTok != null ? `${fmt(remTok)}/${fmt(limTok)} tok` : 'unknown');
+  const resetText = q.reset_summary || a.next_retry_after || 'unknown';
+  const tier = q.tier != null ? `tier ${q.tier}` : '';
+  return `
+    <div class="${blocked ? 'bad' : 'ok'}">${blocked ? 'BLOCKED' : 'OK'}${tier ? ' · ' + tier : ''}</div>
+    <div style="font-size:12px;margin-top:2px">${remText}</div>
+    <div class="bar ${barCls}"><span style="width:${width}%"></span></div>
+    <div class="muted" style="font-size:12px;margin-top:4px">reset: ${resetText}</div>
+    ${q.blocked_reason ? `<div class="muted" style="font-size:11px;margin-top:2px">${q.blocked_reason}</div>` : ''}
+  `;
+}
 async function refresh(force=false) {
   if (force) await fetch('/api/refresh', { method: 'POST' });
   await load();
@@ -154,27 +184,29 @@ async function refresh(force=false) {
 async function load() {
   const res = await fetch('/api/summary');
   const data = await res.json();
-  document.getElementById('updated').textContent = 'updated: ' + (data.updated_at || '—');
+  const qUpdated = data.providers?.cpa?.quota_probe_updated_at;
+  document.getElementById('updated').textContent =
+    'updated: ' + (data.updated_at || '—') + (qUpdated ? ' · quota probe: ' + qUpdated : '');
   const errs = data.errors || [];
   document.getElementById('errors').innerHTML = errs.map(e => `<div class="err">${e}</div>`).join('');
   document.getElementById('notes').innerHTML = (data.notes || []).map(n => `• ${n}`).join('<br/>');
 
   const accounts = data.accounts || [];
-  const active = accounts.filter(a => a.status === 'active' && !a.disabled).length;
+  const active = accounts.filter(a => a.status === 'active' && !a.disabled && !a.unavailable).length;
+  const blocked = accounts.filter(a => a.unavailable || a.quota?.team_blocked).length;
   const tokens = accounts.reduce((s,a)=>s+(a.tokens_total||0),0);
   const success = accounts.reduce((s,a)=>s+(a.success||0),0);
   const failed = accounts.reduce((s,a)=>s+(a.failed||0),0);
-  const providers = Object.keys((data.providers?.cpa?.stats_by_provider) || {});
   document.getElementById('stats').innerHTML = `
-    <div class="card"><div class="k">Accounts</div><div class="v">${accounts.length}</div><div class="muted">${active} active</div></div>
+    <div class="card"><div class="k">Accounts</div><div class="v">${accounts.length}</div><div class="muted">${active} active · ${blocked} blocked</div></div>
     <div class="card"><div class="k">Success</div><div class="v">${fmt(success)}</div><div class="muted">CPA counters</div></div>
     <div class="card"><div class="k">Failed</div><div class="v">${fmt(failed)}</div><div class="muted">CPA counters</div></div>
-    <div class="card"><div class="k">Tokens (queue)</div><div class="v">${fmt(tokens)}</div><div class="muted">recent usage-queue</div></div>
-    <div class="card"><div class="k">Providers</div><div class="v">${providers.length || 1}</div><div class="muted">${providers.join(', ') || 'cpa'}</div></div>
+    <div class="card"><div class="k">Tokens (24h)</div><div class="v">${fmt(tokens)}</div><div class="muted">usage_records</div></div>
   `;
 
   const rows = accounts.map(a => {
-    const st = `<span class="${statusClass(a.status)}">${a.status || '?'}</span>${a.disabled ? ' · disabled' : ''}`;
+    const blocked = !!(a.unavailable || a.quota?.team_blocked);
+    const st = `<span class="${statusClass(a.status, blocked)}">${a.status || '?'}</span>${a.disabled ? ' · disabled' : ''}${a.unavailable ? ' · unavailable' : ''}`;
     const req = `${fmt(a.success)} <span class="muted">ok</span> / ${fmt(a.failed)} <span class="muted">fail</span>`;
     const tok = `${fmt(a.tokens_total)} <div class="muted" style="font-size:12px">in ${fmt(a.tokens_in)} · out ${fmt(a.tokens_out)} · ${a.requests||0} req / ${a.window_hours||24}h</div>`;
     const models = (a.models||[]).length
@@ -188,13 +220,14 @@ async function load() {
       <td><code>${a.provider}</code></td>
       <td><div>${a.email}</div><div class="muted" style="font-size:12px">${a.account_type || ''}${a.last_seen ? ' · last ' + a.last_seen : ''}</div></td>
       <td>${st}</td>
+      <td>${quotaCell(a)}</td>
       <td>${req}</td>
       <td>${tok}</td>
       <td>${spark(a.recent_requests)}</td>
       <td>${models}</td>
     </tr>`;
   }).join('');
-  document.getElementById('rows').innerHTML = rows || '<tr><td colspan="7" class="muted">No accounts</td></tr>';
+  document.getElementById('rows').innerHTML = rows || '<tr><td colspan="8" class="muted">No accounts</td></tr>';
 }
 load();
 setInterval(load, 30000);

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import threading
@@ -11,8 +12,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-import urllib.request
+from urllib import request as urlrequest
+from urllib.error import HTTPError, URLError
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -25,7 +26,7 @@ except Exception:  # pragma: no cover
 
 CPA_BASE = os.environ.get("CPA_BASE", "http://127.0.0.1:8317")
 CPA_MGMT_TOKEN = os.environ.get("CPA_MGMT_TOKEN", "openclaw")
-# cliproxy dashboard postgres (usage_records is durable source of truth)
+CPA_AUTH_DIR = Path(os.environ.get("CPA_AUTH_DIR", "/root/.cli-proxy-api"))
 PG_DSN = os.environ.get(
     "USAGE_PG_DSN",
     "host=172.19.0.2 port=5432 dbname=cliproxyapi user=cliproxyapi password=CHANGE_ME_POSTGRES_PASSWORD",
@@ -35,9 +36,11 @@ DATA_DIR = Path(os.environ.get("USAGE_DATA_DIR", "/opt/usage-dashboard/data"))
 STATIC_DIR = Path(os.environ.get("USAGE_STATIC_DIR", "/opt/usage-dashboard/static"))
 SNAPSHOT_PATH = DATA_DIR / "snapshots.jsonl"
 STATE_PATH = DATA_DIR / "state.json"
+QUOTA_CACHE_PATH = DATA_DIR / "quota_cache.json"
 POLL_SECONDS = int(os.environ.get("USAGE_POLL_SECONDS", "60"))
+QUOTA_PROBE_SECONDS = int(os.environ.get("USAGE_QUOTA_PROBE_SECONDS", "300"))
 
-app = FastAPI(title="usage.raclaw.ru", version="0.1.1")
+app = FastAPI(title="usage.raclaw.ru", version="0.2.0")
 _lock = threading.Lock()
 _state: dict[str, Any] = {
     "updated_at": None,
@@ -45,6 +48,8 @@ _state: dict[str, Any] = {
     "accounts": [],
     "errors": [],
 }
+_quota_cache: dict[str, Any] = {"updated_at": None, "accounts": {}}
+_quota_lock = threading.Lock()
 
 
 def now_iso() -> str:
@@ -53,28 +58,39 @@ def now_iso() -> str:
 
 def cpa_get(path: str, timeout: float = 10.0) -> Any:
     url = f"{CPA_BASE}{path}"
-    req = urllib.request.Request(
+    req = urlrequest.Request(
         url,
         headers={"Authorization": f"Bearer {CPA_MGMT_TOKEN}", "Accept": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urlrequest.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def load_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return default
+
+
+def save_json(path: Path, data: Any) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.replace(path)
+
+
 def load_state() -> None:
-    global _state
-    if STATE_PATH.exists():
-        try:
-            _state = json.loads(STATE_PATH.read_text())
-        except Exception:
-            pass
+    global _state, _quota_cache
+    _state = load_json(STATE_PATH, _state)
+    _quota_cache = load_json(QUOTA_CACHE_PATH, _quota_cache)
 
 
 def save_state(state: dict[str, Any]) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2))
-    tmp.replace(STATE_PATH)
+    save_json(STATE_PATH, state)
     with SNAPSHOT_PATH.open("a") as f:
         f.write(json.dumps({
             "ts": state.get("updated_at"),
@@ -91,14 +107,264 @@ def save_state(state: dict[str, Any]) -> None:
                     "tokens_out": a.get("tokens_out"),
                     "requests": a.get("requests"),
                     "models": a.get("models"),
+                    "quota": a.get("quota"),
                 }
                 for a in state.get("accounts", [])
             ],
         }, ensure_ascii=False) + "\n")
 
 
+def jwt_claims(token: str) -> dict[str, Any]:
+    try:
+        part = token.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        return json.loads(base64.urlsafe_b64decode(part))
+    except Exception:
+        return {}
+
+
+def header_get(headers: dict[str, str], *names: str) -> str | None:
+    lower = {str(k).lower(): v for k, v in headers.items()}
+    for name in names:
+        if name.lower() in lower:
+            val = lower[name.lower()]
+            if isinstance(val, list):
+                return str(val[0]) if val else None
+            return str(val)
+    return None
+
+
+def parse_int(val: Any) -> int | None:
+    try:
+        if val is None or val == "":
+            return None
+        return int(float(str(val).strip()))
+    except Exception:
+        return None
+
+
+def http_json(url: str, token: str, proxy: str | None = None, method: str = "GET", body: bytes | None = None, timeout: float = 20.0) -> tuple[int | None, dict[str, str], Any, str | None]:
+    handlers = []
+    if proxy:
+        handlers.append(urlrequest.ProxyHandler({"http": proxy, "https": proxy}))
+    opener = urlrequest.build_opener(*handlers) if handlers else urlrequest.build_opener()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    req = urlrequest.Request(url, data=body, headers=headers, method=method)
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            try:
+                data = json.loads(raw) if raw else None
+            except Exception:
+                data = raw
+            return resp.status, dict(resp.headers.items()), data, None
+    except HTTPError as e:
+        raw = ""
+        try:
+            raw = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        try:
+            data = json.loads(raw) if raw else None
+        except Exception:
+            data = raw
+        return e.code, dict(e.headers.items() if e.headers else []), data, raw[:500] or str(e)
+    except URLError as e:
+        return None, {}, None, str(e)
+    except Exception as e:
+        return None, {}, None, str(e)
+
+
+def load_auth_file(path_hint: str | None, email: str | None) -> dict[str, Any] | None:
+    candidates: list[Path] = []
+    if path_hint:
+        candidates.append(Path(path_hint))
+    if email:
+        candidates.append(CPA_AUTH_DIR / f"xai-{email}.json")
+        safe = email.replace("@", "-").replace(".", "-")
+        candidates.append(CPA_AUTH_DIR / f"xai-{safe}.json")
+    for p in candidates:
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except Exception:
+                continue
+    # last resort scan
+    if email:
+        for p in CPA_AUTH_DIR.glob("xai-*.json"):
+            try:
+                d = json.loads(p.read_text())
+                if d.get("email") == email:
+                    return d
+            except Exception:
+                continue
+    return None
+
+
+def probe_xai_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
+    email = auth_meta.get("email") or auth_meta.get("account") or "unknown"
+    auth = load_auth_file(auth_meta.get("path"), email)
+    result: dict[str, Any] = {
+        "provider": "xai",
+        "email": email,
+        "probed_at": now_iso(),
+        "ok": False,
+        "team_blocked": None,
+        "blocked_reason": None,
+        "tier": None,
+        "team_id": None,
+        "user_id": None,
+        "rate": {},
+        "cpa": {
+            "status": auth_meta.get("status"),
+            "unavailable": bool(auth_meta.get("unavailable")),
+            "disabled": bool(auth_meta.get("disabled")),
+            "status_message": auth_meta.get("status_message") or "",
+            "next_retry_after": auth_meta.get("next_retry_after"),
+            "failed": auth_meta.get("failed"),
+            "success": auth_meta.get("success"),
+        },
+        "source": "xai-probe",
+        "notes": [],
+        "error": None,
+    }
+
+    # Parse CPA blocked message if present
+    msg = result["cpa"]["status_message"]
+    if msg:
+        try:
+            jm = json.loads(msg) if isinstance(msg, str) and msg.strip().startswith("{") else None
+        except Exception:
+            jm = None
+        if isinstance(jm, dict):
+            result["blocked_reason"] = jm.get("code") or jm.get("error")
+            if "spending-limit" in str(jm.get("code") or "").lower() or "run out of credits" in str(jm.get("error") or "").lower():
+                result["team_blocked"] = True
+                result["notes"].append("CPA reports spending-limit / credits exhausted")
+        elif "spending-limit" in msg.lower() or "run out of credits" in msg.lower():
+            result["team_blocked"] = True
+            result["blocked_reason"] = msg[:200]
+            result["notes"].append("CPA status_message indicates spending limit")
+
+    if result["cpa"].get("next_retry_after"):
+        result["notes"].append(f"CPA next_retry_after={result['cpa']['next_retry_after']}")
+
+    if not auth or not auth.get("access_token"):
+        result["error"] = "auth file/token missing"
+        return result
+
+    token = auth["access_token"]
+    proxy = auth.get("proxy_url") or None
+    claims = jwt_claims(token)
+    result["tier"] = claims.get("tier")
+    result["team_id"] = claims.get("team_id")
+    result["user_id"] = claims.get("sub") or claims.get("principal_id")
+
+    # /v1/me for team_blocked
+    st, headers, data, err = http_json("https://api.x.ai/v1/me", token, proxy=proxy, timeout=15)
+    if st == 200 and isinstance(data, dict):
+        result["ok"] = True
+        result["team_blocked"] = bool(data.get("team_blocked"))
+        result["team_id"] = data.get("team_id") or result["team_id"]
+        result["user_id"] = data.get("user_id") or result["user_id"]
+        if result["team_blocked"]:
+            result["blocked_reason"] = result["blocked_reason"] or "team_blocked=true"
+            result["notes"].append("xAI /v1/me team_blocked=true")
+        else:
+            result["notes"].append("xAI /v1/me team_blocked=false")
+    else:
+        result["error"] = f"/v1/me failed: {st} {err or ''}".strip()
+
+    # Rate-limit headers appear on chat/completions, not on /models.
+    # Tiny completion is used only for live accounts; blocked accounts skip spend.
+    hdrs = headers or {}
+    st2, headers2, data2, err2 = None, {}, None, None
+    if not result.get("team_blocked"):
+        body = json.dumps({
+            "model": "grok-4.5",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }).encode()
+        st2, headers2, data2, err2 = http_json(
+            "https://api.x.ai/v1/chat/completions",
+            token,
+            proxy=proxy,
+            method="POST",
+            body=body,
+            timeout=40,
+        )
+        hdrs = headers2 or headers or {}
+    else:
+        result["notes"].append("skipped chat probe because team_blocked")
+
+    limit_req = parse_int(header_get(hdrs, "x-ratelimit-limit-requests", "X-Ratelimit-Limit-Requests"))
+    rem_req = parse_int(header_get(hdrs, "x-ratelimit-remaining-requests", "X-Ratelimit-Remaining-Requests"))
+    limit_tok = parse_int(header_get(hdrs, "x-ratelimit-limit-tokens", "X-Ratelimit-Limit-Tokens"))
+    rem_tok = parse_int(header_get(hdrs, "x-ratelimit-remaining-tokens", "X-Ratelimit-Remaining-Tokens"))
+    reset_req = header_get(hdrs, "x-ratelimit-reset-requests", "X-Ratelimit-Reset-Requests")
+    reset_tok = header_get(hdrs, "x-ratelimit-reset-tokens", "X-Ratelimit-Reset-Tokens")
+
+    result["rate"] = {
+        "limit_requests": limit_req,
+        "remaining_requests": rem_req,
+        "limit_tokens": limit_tok,
+        "remaining_tokens": rem_tok,
+        "reset_requests": reset_req,
+        "reset_tokens": reset_tok,
+        "probe_status": st2,
+        "probe_error": None if st2 and st2 < 400 else (err2 or f"status {st2}"),
+    }
+    if rem_req is not None and limit_req:
+        result["rate"]["remaining_requests_pct"] = round(100.0 * rem_req / limit_req, 2)
+    if rem_tok is not None and limit_tok:
+        result["rate"]["remaining_tokens_pct"] = round(100.0 * rem_tok / limit_tok, 2)
+
+    # Interpret what we can honestly say about "remaining usage"
+    if result["team_blocked"]:
+        result["remaining_summary"] = "0 (team blocked / spending-limit)"
+        result["reset_summary"] = result["cpa"].get("next_retry_after") or "unknown weekly/credit reset (not exposed by API)"
+    elif rem_tok is not None and limit_tok is not None:
+        result["remaining_summary"] = f"{rem_tok}/{limit_tok} tokens (rate-limit window)"
+        result["reset_summary"] = reset_tok or reset_req or "rolling window (no reset timestamp from API)"
+    else:
+        result["remaining_summary"] = "unknown (no SuperGrok remaining endpoint)"
+        result["reset_summary"] = result["cpa"].get("next_retry_after") or "unknown"
+
+    result["notes"].append(
+        "xAI API does not expose SuperGrok weekly remaining/reset; rate-limit headers are short-window RPM/TPM only."
+    )
+    return result
+
+
+def probe_all_xai(files: list[dict[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {"updated_at": now_iso(), "accounts": {}}
+    for f in files:
+        if (f.get("provider") or f.get("type")) != "xai":
+            continue
+        email = f.get("email") or f.get("account")
+        if not email:
+            continue
+        try:
+            out["accounts"][email] = probe_xai_account(f)
+        except Exception as e:
+            out["accounts"][email] = {
+                "provider": "xai",
+                "email": email,
+                "probed_at": now_iso(),
+                "ok": False,
+                "error": str(e),
+                "notes": ["probe exception"],
+            }
+    save_json(QUOTA_CACHE_PATH, out)
+    return out
+
+
 def fetch_usage_from_pg(window_hours: int = USAGE_WINDOW_HOURS) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """Aggregate durable usage_records from cliproxy dashboard postgres."""
     errors: list[str] = []
     by_source: dict[str, dict[str, Any]] = {}
 
@@ -176,7 +442,7 @@ def fetch_usage_from_pg(window_hours: int = USAGE_WINDOW_HOURS) -> tuple[dict[st
     return by_source, errors
 
 
-def collect_cpa() -> dict[str, Any]:
+def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
     errors: list[str] = []
     files: list[dict[str, Any]] = []
 
@@ -189,10 +455,35 @@ def collect_cpa() -> dict[str, Any]:
     usage_by_source, usage_errors = fetch_usage_from_pg()
     errors.extend(usage_errors)
 
+    # quota probe cache
+    with _quota_lock:
+        global _quota_cache
+        need_probe = force_quota
+        if not _quota_cache.get("accounts"):
+            need_probe = True
+        else:
+            updated = _quota_cache.get("updated_at")
+            if not updated:
+                need_probe = True
+            else:
+                try:
+                    ts = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+                    if (datetime.now(timezone.utc) - ts).total_seconds() > QUOTA_PROBE_SECONDS:
+                        need_probe = True
+                except Exception:
+                    need_probe = True
+        if need_probe and files:
+            try:
+                _quota_cache = probe_all_xai(files)
+            except Exception as e:
+                errors.append(f"quota-probe: {e}")
+        quota_accounts = dict((_quota_cache or {}).get("accounts") or {})
+
     accounts: list[dict[str, Any]] = []
     provider_stats: dict[str, dict[str, Any]] = defaultdict(lambda: {
         "accounts": 0, "active": 0, "success": 0, "failed": 0,
         "tokens_total": 0, "tokens_in": 0, "tokens_out": 0, "requests": 0,
+        "blocked": 0,
     })
 
     for f in files:
@@ -202,6 +493,7 @@ def collect_cpa() -> dict[str, Any]:
         recent = f.get("recent_requests") or []
         recent_success = sum(int(x.get("success") or 0) for x in recent)
         recent_failed = sum(int(x.get("failed") or 0) for x in recent)
+        quota = quota_accounts.get(email) if provider == "xai" else None
 
         account = {
             "provider": provider,
@@ -211,6 +503,7 @@ def collect_cpa() -> dict[str, Any]:
             "status_message": f.get("status_message") or "",
             "disabled": bool(f.get("disabled")),
             "unavailable": bool(f.get("unavailable")),
+            "next_retry_after": f.get("next_retry_after"),
             "account_type": f.get("account_type") or f.get("type"),
             "success": int(f.get("success") or 0),
             "failed": int(f.get("failed") or 0),
@@ -228,14 +521,17 @@ def collect_cpa() -> dict[str, Any]:
             "models": list(tok.get("models") or []),
             "model_stats": list(tok.get("model_stats") or []),
             "window_hours": USAGE_WINDOW_HOURS,
-            "source": "cpa+pg",
+            "quota": quota,
+            "source": "cpa+pg+xai-probe" if provider == "xai" else "cpa+pg",
         }
         accounts.append(account)
 
         ps = provider_stats[provider]
         ps["accounts"] += 1
-        if account["status"] == "active" and not account["disabled"]:
+        if account["status"] == "active" and not account["disabled"] and not account["unavailable"]:
             ps["active"] += 1
+        if account.get("unavailable") or (quota and quota.get("team_blocked")):
+            ps["blocked"] += 1
         ps["success"] += account["success"]
         ps["failed"] += account["failed"]
         ps["tokens_total"] += account["tokens_total"]
@@ -255,6 +551,7 @@ def collect_cpa() -> dict[str, Any]:
             "status_message": "seen in usage_records, no auth-file",
             "disabled": False,
             "unavailable": False,
+            "next_retry_after": None,
             "account_type": "unknown",
             "success": int(tok.get("requests") or 0) - int(tok.get("fail") or 0),
             "failed": int(tok.get("fail") or 0),
@@ -272,10 +569,16 @@ def collect_cpa() -> dict[str, Any]:
             "models": list(tok.get("models") or []),
             "model_stats": list(tok.get("model_stats") or []),
             "window_hours": USAGE_WINDOW_HOURS,
+            "quota": None,
             "source": "pg-usage-only",
         })
 
-    accounts.sort(key=lambda a: (a["provider"], -(a["tokens_total"] or 0), a["email"] or ""))
+    accounts.sort(key=lambda a: (
+        0 if a.get("unavailable") or (a.get("quota") or {}).get("team_blocked") else 1,
+        a["provider"],
+        -(a["tokens_total"] or 0),
+        a["email"] or "",
+    ))
 
     return {
         "updated_at": now_iso(),
@@ -287,21 +590,23 @@ def collect_cpa() -> dict[str, Any]:
                 "stats_by_provider": dict(provider_stats),
                 "usage_window_hours": USAGE_WINDOW_HOURS,
                 "usage_sources": len(usage_by_source),
+                "quota_probe_updated_at": (_quota_cache or {}).get("updated_at"),
             }
         },
         "accounts": accounts,
         "errors": errors,
         "notes": [
-            "Tokens/models come from cliproxy dashboard postgres usage_records (durable), not from CPA usage-queue (ephemeral).",
+            "Tokens/models from cliproxy postgres usage_records (durable), not CPA usage-queue.",
             f"Usage window: last {USAGE_WINDOW_HOURS}h.",
-            "success/failed still come from CPA auth-files live counters.",
-            "CPA does not expose native SuperGrok remaining quota.",
+            "xAI remaining: rate-limit window remaining (RPM/TPM headers) + team_blocked from /v1/me.",
+            "xAI does NOT expose SuperGrok weekly remaining/reset via public API; that still requires console/UI.",
+            "CPA next_retry_after is cooldown after quota/spending-limit error, not billing cycle reset.",
         ],
     }
 
 
-def refresh_once() -> dict[str, Any]:
-    state = collect_cpa()
+def refresh_once(force_quota: bool = False) -> dict[str, Any]:
+    state = collect_cpa(force_quota=force_quota)
     with _lock:
         global _state
         _state = state
@@ -312,7 +617,7 @@ def refresh_once() -> dict[str, Any]:
 def poller() -> None:
     while True:
         try:
-            refresh_once()
+            refresh_once(force_quota=False)
         except Exception as e:
             with _lock:
                 _state["errors"] = list(_state.get("errors") or []) + [f"poller: {e}"]
@@ -325,7 +630,7 @@ def on_startup() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     load_state()
     try:
-        refresh_once()
+        refresh_once(force_quota=True)
     except Exception as e:
         _state["errors"] = [f"startup: {e}"]
         _state["updated_at"] = now_iso()
@@ -341,6 +646,7 @@ def health() -> dict[str, Any]:
             "updated_at": _state.get("updated_at"),
             "accounts": len(_state.get("accounts") or []),
             "errors": _state.get("errors") or [],
+            "quota_probe_updated_at": ((_state.get("providers") or {}).get("cpa") or {}).get("quota_probe_updated_at"),
         }
 
 
@@ -362,10 +668,16 @@ def providers() -> dict[str, Any]:
         return {"updated_at": _state.get("updated_at"), "providers": _state.get("providers") or {}}
 
 
+@app.get("/api/quota")
+def quota() -> dict[str, Any]:
+    with _quota_lock:
+        return json.loads(json.dumps(_quota_cache))
+
+
 @app.post("/api/refresh")
 def refresh() -> dict[str, Any]:
     try:
-        return refresh_once()
+        return refresh_once(force_quota=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
