@@ -133,7 +133,7 @@
     <header>
       <div>
         <h1>Usage · raclaw</h1>
-        <div class="sub">CPA · SuperGrok remaining/reset · токены · DeepSeek wallet отдельно</div>
+        <div class="sub">CPA · SuperGrok · токены · wallets: DeepSeek + OpenRouter</div>
       </div>
       <div class="actions">
         <button onclick="refresh(false)">Обновить</button>
@@ -143,7 +143,7 @@
 
     <div class="meta">
       <span class="chip" id="updated">обновлено: —</span>
-      <span class="chip" id="sourceChip">CPA + Postgres + xAI · DeepSeek wallet</span>
+      <span class="chip" id="sourceChip">CPA + Postgres + xAI · wallets</span>
     </div>
     <div id="errors"></div>
     <div class="stats" id="stats"></div>
@@ -354,7 +354,16 @@ async function load() {
     '<div class="card"><div class="k">Ошибки</div><div class="v">' + fmt(failed) + '</div><div class="muted">счётчики CPA</div></div>' +
     '<div class="card"><div class="k">Токены CPA (24ч)</div><div class="v">' + fmt(tokens) + '</div><div class="muted">usage_records</div></div>';
 
-  const walletCards = Object.keys(wallets).map(function(key) {
+  function money(v, digits) {
+    if (v == null || v === '') return '—';
+    const n = Number(v);
+    if (Number.isNaN(n)) return String(v);
+    return n.toLocaleString('ru-RU', { minimumFractionDigits: digits||2, maximumFractionDigits: digits||2 });
+  }
+  const order = ['deepseek', 'openrouter'].concat(Object.keys(wallets).filter(function(k){
+    return k !== 'deepseek' && k !== 'openrouter';
+  }));
+  const walletCards = order.filter(function(k){ return wallets[k]; }).map(function(key) {
     const w = wallets[key] || {};
     if (key === 'deepseek' || w.provider === 'deepseek') {
       const bals = w.balance || [];
@@ -379,7 +388,42 @@ async function load() {
         '<div class="quota-main" style="margin-top:10px">расход 24ч: ' + spent + '</div>' +
         '<div class="quota-sub">' + (baseAt || 'история копится') + (spend.partial ? ' · partial' : '') + '</div>' +
         (w.error ? '<div class="quota-sub bad">' + w.error + '</div>' : '') +
-        '<div class="quota-sub">не CPA · API balance + локальные snapshots</div>' +
+        '<div class="quota-sub">не CPA · API balance + snapshots</div>' +
+      '</div>';
+    }
+    if (key === 'openrouter' || w.provider === 'openrouter') {
+      const rem = w.remaining;
+      const main = (rem != null) ? ('$' + money(rem)) : '—';
+      const total = w.total_credits;
+      const used = w.total_usage;
+      const spend = w.spend_24h || {};
+      const spent = w.spent_summary || spend.spent_summary || '—';
+      const daily = w.usage_daily;
+      const weekly = w.usage_weekly;
+      const monthly = w.usage_monthly;
+      const badge = w.ok ? '<span class="pill ok">wallet</span>' : '<span class="pill bad">error</span>';
+      const keys = w.keys || [];
+      let keysHtml = '';
+      if (keys.length) {
+        keysHtml = '<div class="quota-sub" style="margin-top:8px">keys today: ' +
+          keys.slice(0,5).map(function(k){
+            return (k.name || k.label || '?') + ' $' + money(k.usage_daily || 0);
+          }).join(' · ') + '</div>';
+      }
+      return '<div class="card wallet-card">' +
+        '<h3>OpenRouter · credits</h3>' +
+        '<div>' + badge + '</div>' +
+        '<div class="big">' + main + '</div>' +
+        '<div class="line2">остаток · used $' + money(used) + ' / $' + money(total) + '</div>' +
+        '<div class="quota-main" style="margin-top:10px">расход 24ч: ' + spent + '</div>' +
+        '<div class="quota-sub">today all keys $' + money(w.usage_daily_all_keys != null ? w.usage_daily_all_keys : daily) +
+          ' · this key $' + money(daily) +
+          ' · week $' + money(weekly) +
+          ' · month $' + money(monthly) + '</div>' +
+        (spend.baseline_at ? ('<div class="quota-sub">база ' + fmtDateShort(spend.baseline_at) + (spend.partial ? ' · partial' : '') + '</div>') : '') +
+        keysHtml +
+        (w.error ? '<div class="quota-sub bad">' + w.error + '</div>' : '') +
+        '<div class="quota-sub">не CPA · /api/v1/credits + /api/v1/key</div>' +
       '</div>';
     }
     return '';

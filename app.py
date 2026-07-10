@@ -592,6 +592,317 @@ def build_deepseek_wallet(ds_quota: dict[str, Any] | None) -> dict[str, Any] | N
 
 
 
+
+def get_openrouter_api_key() -> str | None:
+    """Env OPENROUTER_API_KEY > openclaw.json models.providers.openrouter > credentials/openrouter.env."""
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if key and len(key) > 10:
+        return key
+    try:
+        oc = json.loads(Path("/root/.openclaw/openclaw.json").read_text())
+        orp = oc.get("models", {}).get("providers", {}).get("openrouter", {})
+        ak = orp.get("apiKey")
+        if isinstance(ak, str) and len(ak) > 10:
+            return ak
+        if isinstance(ak, dict) and ak.get("source") == "env":
+            key = os.environ.get(ak.get("id", "OPENROUTER_API_KEY"), "")
+            if key and len(key) > 10:
+                return key
+    except Exception:
+        pass
+    for p in (
+        Path("/root/.openclaw/credentials/openrouter.env"),
+        Path("/root/.openclaw/gateway.systemd.env"),
+    ):
+        try:
+            for line in p.read_text().splitlines():
+                if line.startswith("OPENROUTER_API_KEY="):
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if val and len(val) > 10:
+                        return val
+        except Exception:
+            pass
+    return None
+
+
+def get_openrouter_management_key() -> str | None:
+    key = os.environ.get("OPENROUTER_MANAGEMENT_KEY")
+    if key and len(key) > 10:
+        return key
+    try:
+        p = Path("/root/.openclaw/credentials/openrouter-management.env")
+        for line in p.read_text().splitlines():
+            if line.startswith("OPENROUTER_MANAGEMENT_KEY="):
+                val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if val and len(val) > 10:
+                    return val
+    except Exception:
+        pass
+    return None
+
+
+def probe_openrouter_wallet() -> dict[str, Any]:
+    """Fetch OpenRouter account credits + key usage.
+
+    - GET /api/v1/credits → total_credits / total_usage (account-level)
+    - GET /api/v1/key → per-key usage_daily/weekly/monthly
+    Remaining ≈ total_credits - total_usage
+    """
+    key = get_openrouter_api_key()
+    result: dict[str, Any] = {
+        "provider": "openrouter",
+        "email": "openrouter-main",
+        "probed_at": now_iso(),
+        "ok": False,
+        "kind": "openrouter-credits",
+        "total_credits": None,
+        "total_usage": None,
+        "remaining": None,
+        "key": None,
+        "keys": [],
+        "error": None,
+    }
+    if not key:
+        result["error"] = "OPENROUTER_API_KEY not set"
+        return result
+
+    st, _hdrs, data, err = http_json(
+        "https://openrouter.ai/api/v1/credits",
+        token=key,
+        timeout=15.0,
+    )
+    if st != 200 or not isinstance(data, dict):
+        result["error"] = f"credits API: {st} {err or data}".strip()
+        return result
+
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    try:
+        total_credits = float(payload.get("total_credits") or 0)
+        total_usage = float(payload.get("total_usage") or 0)
+    except Exception:
+        result["error"] = f"credits parse failed: {payload}"
+        return result
+
+    remaining = round(total_credits - total_usage, 6)
+    result["ok"] = True
+    result["total_credits"] = total_credits
+    result["total_usage"] = total_usage
+    result["remaining"] = remaining
+    result["remaining_summary"] = f"${remaining:.2f} left · used ${total_usage:.2f} / ${total_credits:.2f}"
+
+    # primary key stats
+    st2, _h2, data2, err2 = http_json(
+        "https://openrouter.ai/api/v1/key",
+        token=key,
+        timeout=15.0,
+    )
+    if st2 == 200 and isinstance(data2, dict):
+        kpayload = data2.get("data") if isinstance(data2.get("data"), dict) else data2
+        result["key"] = {
+            "label": kpayload.get("label"),
+            "usage": kpayload.get("usage"),
+            "usage_daily": kpayload.get("usage_daily"),
+            "usage_weekly": kpayload.get("usage_weekly"),
+            "usage_monthly": kpayload.get("usage_monthly"),
+            "limit": kpayload.get("limit"),
+            "limit_remaining": kpayload.get("limit_remaining"),
+            "is_free_tier": kpayload.get("is_free_tier"),
+        }
+    elif err2:
+        result["key_error"] = f"key API: {st2} {err2}"
+
+    # optional: list keys via management key
+    mkey = get_openrouter_management_key()
+    if mkey:
+        st3, _h3, data3, err3 = http_json(
+            "https://openrouter.ai/api/v1/keys",
+            token=mkey,
+            timeout=20.0,
+        )
+        if st3 == 200 and isinstance(data3, dict):
+            items = data3.get("data") or []
+            keys_out = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                if it.get("disabled"):
+                    continue
+                keys_out.append({
+                    "name": it.get("name"),
+                    "label": it.get("label"),
+                    "usage": it.get("usage"),
+                    "usage_daily": it.get("usage_daily"),
+                    "usage_weekly": it.get("usage_weekly"),
+                    "usage_monthly": it.get("usage_monthly"),
+                    "limit_remaining": it.get("limit_remaining"),
+                })
+            # sort by daily usage desc
+            keys_out.sort(key=lambda x: float(x.get("usage_daily") or 0), reverse=True)
+            result["keys"] = keys_out[:12]
+        elif err3:
+            result["keys_error"] = f"keys API: {st3} {err3}"
+
+    return result
+
+
+def compute_openrouter_spend_24h(
+    current_total_usage: float | None,
+    window_hours: int = USAGE_WINDOW_HOURS,
+) -> dict[str, Any]:
+    """Estimate rolling 24h spend from snapshots of account total_usage.
+
+    spent = current_total_usage - baseline_total_usage (usage only goes up).
+    """
+    result: dict[str, Any] = {
+        "window_hours": window_hours,
+        "partial": True,
+        "baseline_at": None,
+        "baseline_total_usage": None,
+        "current_total_usage": current_total_usage,
+        "spent": None,
+        "spent_summary": "недостаточно истории",
+        "note": "rolling 24h spend from local snapshots of OpenRouter total_usage",
+    }
+    if current_total_usage is None:
+        result["note"] = "no current total_usage"
+        return result
+    if not SNAPSHOT_PATH.exists():
+        result["note"] = "no snapshots yet"
+        return result
+
+    now = datetime.now(timezone.utc)
+    cutoff = now.timestamp() - window_hours * 3600
+    pre_window: tuple[str, float] | None = None
+    first_in_window: tuple[str, float] | None = None
+
+    try:
+        with SNAPSHOT_PATH.open("r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                ts_raw = obj.get("ts")
+                usage_val = None
+                wallets = obj.get("wallets") or {}
+                orw = wallets.get("openrouter") if isinstance(wallets, dict) else None
+                if isinstance(orw, dict) and orw.get("total_usage") is not None:
+                    try:
+                        usage_val = float(orw.get("total_usage"))
+                    except Exception:
+                        usage_val = None
+                if usage_val is None:
+                    continue
+                try:
+                    ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    ts_epoch = ts.timestamp()
+                    ts_s = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                except Exception:
+                    continue
+                if ts_epoch < cutoff:
+                    pre_window = (ts_s, usage_val)
+                    continue
+                if first_in_window is None:
+                    first_in_window = (ts_s, usage_val)
+    except Exception as e:
+        result["note"] = f"snapshot read error: {e}"
+        return result
+
+    if pre_window is not None:
+        baseline_at, baseline_usage = pre_window
+        partial = False
+    elif first_in_window is not None:
+        baseline_at, baseline_usage = first_in_window
+        partial = True
+    else:
+        return result
+
+    spent = round(float(current_total_usage) - float(baseline_usage), 6)
+    if spent < 0:
+        # top-up / refund / reset edge-case
+        spent_summary = f"+${abs(spent):.2f} (usage dropped)"
+    else:
+        spent_summary = f"−${spent:.2f}"
+    if partial:
+        spent_summary += " (частичная история)"
+
+    result.update({
+        "partial": partial,
+        "baseline_at": baseline_at,
+        "baseline_total_usage": baseline_usage,
+        "current_total_usage": float(current_total_usage),
+        "spent": spent,
+        "spent_summary": spent_summary,
+    })
+    return result
+
+
+def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not or_probe:
+        return None
+    spend = compute_openrouter_spend_24h(or_probe.get("total_usage"))
+    key = or_probe.get("key") or {}
+    keys = or_probe.get("keys") or []
+    daily = key.get("usage_daily")
+    try:
+        daily_f = float(daily) if daily is not None else None
+    except Exception:
+        daily_f = None
+
+    # Sum usage_daily across management keys when available (= account-ish today UTC)
+    keys_daily = None
+    if keys:
+        try:
+            keys_daily = round(sum(float(k.get("usage_daily") or 0) for k in keys), 6)
+        except Exception:
+            keys_daily = None
+
+    spent_summary = spend.get("spent_summary")
+    # Prefer rolling snapshot 24h when not partial; else API daily figures
+    if spend.get("spent") is not None and not spend.get("partial"):
+        spent_summary = spend.get("spent_summary")
+    elif keys_daily is not None:
+        spent_summary = f"−${keys_daily:.2f} today (UTC, all keys)"
+        if spend.get("spent") is not None and spend.get("partial"):
+            spent_summary += f" · snap {spend.get('spent_summary')}"
+    elif daily_f is not None:
+        if spend.get("spent") is None:
+            spent_summary = f"−${daily_f:.2f} today (UTC, key)"
+        else:
+            spent_summary = f"{spend.get('spent_summary')} · key today −${daily_f:.2f}"
+
+    remaining = or_probe.get("remaining")
+    return {
+        "provider": "openrouter",
+        "email": "openrouter-main",
+        "name": "OpenRouter",
+        "kind": "wallet-credits",
+        "status": "active" if or_probe.get("ok") else "error",
+        "ok": bool(or_probe.get("ok")),
+        "total_credits": or_probe.get("total_credits"),
+        "total_usage": or_probe.get("total_usage"),
+        "remaining": remaining,
+        "remaining_summary": or_probe.get("remaining_summary") or "",
+        "key": key,
+        "keys": keys,
+        "usage_daily": daily_f,
+        "usage_daily_all_keys": keys_daily,
+        "usage_weekly": key.get("usage_weekly"),
+        "usage_monthly": key.get("usage_monthly"),
+        "error": or_probe.get("error"),
+        "probed_at": or_probe.get("probed_at"),
+        "spend_24h": spend,
+        "spent_summary": spent_summary,
+        "source": "openrouter-credits-api+local-snapshots",
+    }
+
+
+
 def load_auth_file(path_hint: str | None, email: str | None) -> dict[str, Any] | None:
     candidates: list[Path] = []
     if path_hint:
@@ -935,12 +1246,18 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
                     _quota_cache = probe_all_xai(files)
                 except Exception as e:
                     errors.append(f"xai-quota-probe: {e}")
-            # DeepSeek balance probe
+            # DeepSeek + OpenRouter wallet probes
             try:
                 ds_accounts = dict((_quota_cache or {}).get("accounts") or {})
                 ds_result = probe_deepseek_balance()
                 if ds_result is not None:
                     ds_accounts["deepseek-main"] = ds_result
+                try:
+                    or_result = probe_openrouter_wallet()
+                    if or_result is not None:
+                        ds_accounts["openrouter-main"] = or_result
+                except Exception as e:
+                    errors.append(f"openrouter-wallet-probe: {e}")
                 _quota_cache["accounts"] = ds_accounts
                 _quota_cache["updated_at"] = now_iso()
                 save_json(QUOTA_CACHE_PATH, _quota_cache)
@@ -1042,12 +1359,11 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             "source": "pg-usage-only",
         })
 
-    # DeepSeek is NOT a CPA account: keep wallet-only (balance + estimated 24h spend).
-    # No tokens/models in the CPA table — DeepSeek API has no usage history endpoint.
+    # Wallets (not CPA accounts): DeepSeek + OpenRouter
     ds_quota = quota_accounts.get("deepseek-main") if quota_accounts else None
-    # If probe cache is stale/missing deepseek, try a lightweight probe when forced path already ran;
-    # otherwise use cached value only.
+    or_probe = quota_accounts.get("openrouter-main") if quota_accounts else None
     deepseek_wallet = build_deepseek_wallet(ds_quota)
+    openrouter_wallet = build_openrouter_wallet(or_probe)
 
     # Drop any orphan PG rows that look like deepseek (rare historical CPA key traffic)
     accounts = [
@@ -1056,7 +1372,7 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             a.get("source") == "pg-usage-only"
             and any("deepseek" in str(m).lower() for m in (a.get("models") or []))
         )
-        and a.get("provider") != "deepseek"
+        and a.get("provider") not in ("deepseek", "openrouter")
     ]
 
     accounts.sort(key=lambda a: (
@@ -1069,6 +1385,8 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
     wallets: dict[str, Any] = {}
     if deepseek_wallet:
         wallets["deepseek"] = deepseek_wallet
+    if openrouter_wallet:
+        wallets["openrouter"] = openrouter_wallet
 
     return {
         "updated_at": now_iso(),
@@ -1088,7 +1406,8 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         "errors": errors,
         "notes": [
             "Tokens/models for CPA accounts from cliproxy postgres usage_records (durable), not CPA usage-queue.",
-            "DeepSeek is shown separately as wallet balance only; 24h spend estimated from local snapshots (API has no usage history).",
+            "DeepSeek wallet: balance only; 24h spend from local snapshots (no usage history API).",
+            "OpenRouter wallet: account credits (total_credits-total_usage) + key usage_daily; rolling 24h from snapshots.",
             f"Usage window: last {USAGE_WINDOW_HOURS}h.",
             "xAI SuperGrok/Build remaining% + reset: grok.com GetGrokCreditsConfig (same source as Grok CLI TUI).",
             "Secondary: team_blocked from /v1/me; short-window RPM/TPM from chat rate-limit headers.",

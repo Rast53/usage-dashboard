@@ -49,3 +49,10 @@ MIT
 - 24h spend: estimated from local `snapshots.jsonl` (baseline − current)
 - API has no usage history endpoint
 - Endpoint: `GET /api/wallets`
+
+## OpenRouter
+- Separate wallet card (not in CPA table)
+- Balance: `GET /api/v1/credits` → remaining ≈ total_credits - total_usage
+- Key usage: `GET /api/v1/key` (usage_daily/weekly/monthly)
+- Optional all keys: management key `GET /api/v1/keys`
+- Rolling 24h spend from local snapshots of total_usage (fills in after history exists)
