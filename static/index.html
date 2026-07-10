@@ -445,7 +445,70 @@ function renderDeepseekCard(w) {
     '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
   '</div>';
 }
-function renderOpenrouterCard(w) { return ''; }
+function renderOpenrouterCard(w) {
+  if (!w) return '';
+  const st = classify(w);
+  const rem = w.remaining;
+  const total = w.total_credits;
+  const used = w.total_usage;
+  const mainBal = (rem != null) ? ('$' + money(rem)) : '—';
+  const badge = w.ok ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERR</span>';
+
+  const spend = w.spend_24h || {};
+  const spent = w.spent_summary || spend.spent_summary || '—';
+  const daily = w.usage_daily;
+  const weekly = w.usage_weekly;
+  const monthly = w.usage_monthly;
+  const dailyAll = w.usage_daily_all_keys != null ? w.usage_daily_all_keys : daily;
+
+  // progress bar: used/total
+  let progressBar = '';
+  if (total != null && used != null && total > 0) {
+    const pct = Math.max(0, Math.min(100, (used / total) * 100));
+    const remPct = 100 - pct;
+    const cls = remPct <= 0 ? 'bad' : remPct <= 40 ? 'warn' : 'ok';
+    progressBar = '<div class="bar ' + cls + '"><span style="width:' + remPct + '%"></span></div>';
+  }
+
+  const cardId = 'openrouter-card';
+
+  // Details: key breakdown
+  const keys = w.keys || [];
+  let keysHtml = '';
+  if (keys.length) {
+    keysHtml = keys.slice(0, 8).map(function(k) {
+      return '<div class="details-row"><span>' + escapeHtml(k.name || k.label || '?') + '</span><span>$' + money(k.usage_daily || 0) + ' today</span></div>';
+    }).join('');
+  }
+
+  const details =
+    '<div class="details-body">' +
+      '<div class="details-section">Кредиты</div>' +
+      '<div class="details-row"><span>остаток</span><span><b>$' + money(rem) + '</b></span></div>' +
+      '<div class="details-row"><span>использовано</span><span class="muted">$' + money(used) + ' / $' + money(total) + '</span></div>' +
+      '<div class="details-section">Расход</div>' +
+      '<div class="details-row"><span>24ч (snapshots)</span><span>' + escapeHtml(String(spent)) + '</span></div>' +
+      '<div class="details-row"><span>сегодня (all keys)</span><span>$' + money(dailyAll) + '</span></div>' +
+      '<div class="details-row"><span>сегодня (this key)</span><span>$' + money(daily) + '</span></div>' +
+      '<div class="details-row"><span>неделя</span><span>$' + money(weekly) + '</span></div>' +
+      '<div class="details-row"><span>месяц</span><span>$' + money(monthly) + '</span></div>' +
+      (spend.baseline_at ? '<div class="details-row"><span>baseline</span><span class="muted">' + fmtDateShort(spend.baseline_at) + (spend.partial ? ' · partial' : '') + '</span></div>' : '') +
+      (keysHtml ? '<div class="details-section">Ключи</div>' + keysHtml : '') +
+      '<div class="details-src">источник: /api/v1/credits + /api/v1/key</div>' +
+      (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '') +
+    '</div>';
+
+  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
+    '<div class="pcard-head"><span class="pcard-title">OpenRouter · credits</span>' + badge + '</div>' +
+    '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">остаток</span><span class="limit-val">' + mainBal + '</span></div></div>' +
+    (used != null && total != null ? '<div class="bar-sub">used $' + money(used) + ' / $' + money(total) + '</div>' : '') +
+    progressBar +
+    '<div class="limit-row" style="margin-top:8px"><div class="limit-row-head"><span class="limit-label">расход 24ч</span><span class="limit-val">' + escapeHtml(String(spent)) + '</span></div></div>' +
+    '<div class="bar-sub">week $' + money(weekly) + ' · month $' + money(monthly) + '</div>' +
+    details +
+    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
+  '</div>';
+}
 
 /* ── Stats row ── */
 function renderStats(data) {
