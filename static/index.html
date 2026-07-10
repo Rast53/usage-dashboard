@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Usage · raclaw</title>
+<title>Мои подписки · raclaw</title>
 <style>
   :root {
     --bg: #0b0f14;
@@ -24,107 +24,152 @@
     background: radial-gradient(1200px 600px at 20% -10%, #152033 0%, var(--bg) 55%);
     color: var(--text);
     min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: 1280px; margin: 0 auto; padding: 28px 20px 48px; }
+
+  /* Header */
   header {
-    display: flex; justify-content: space-between; align-items: flex-start;
+    display: flex; justify-content: space-between; align-items: center;
     gap: 16px; margin-bottom: 22px; flex-wrap: wrap;
   }
-  h1 { margin: 0; font-size: 28px; letter-spacing: -0.03em; }
-  .sub { color: var(--muted); margin-top: 6px; font-size: 14px; }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 26px; letter-spacing: -0.03em; }
+  .sub { color: var(--muted); margin-top: 4px; font-size: 13px; }
   button {
     background: var(--card); color: var(--text); border: 1px solid var(--border);
-    border-radius: 10px; padding: 10px 14px; cursor: pointer; font-size: 14px;
+    border-radius: 10px; padding: 9px 16px; cursor: pointer; font-size: 14px;
+    transition: border-color 0.15s;
   }
   button:hover { border-color: var(--accent); }
-  .meta {
-    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
-    margin-bottom: 18px; color: var(--muted); font-size: 13px;
-  }
-  .chip {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: var(--chip); border: 1px solid var(--border);
-    border-radius: 999px; padding: 4px 10px; font-size: 12px; color: var(--muted);
-  }
-  .stats {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 12px; margin-bottom: 18px;
-  }
-  .card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 14px; padding: 14px 16px;
-  }
-  .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
-  .v { font-size: 26px; font-weight: 650; margin-top: 6px; letter-spacing: -0.03em; }
-  .muted { color: var(--muted); }
-  .ok { color: var(--green); }
-  .bad { color: var(--red); }
-  .warn { color: var(--yellow); }
+
+  /* Error banner */
   .err {
     background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.25);
     color: #ffb4af; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px;
   }
-  .table-wrap {
+
+  /* Stats row */
+  .stats {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 12px; margin-bottom: 22px;
+  }
+  .stat-card {
     background: var(--card); border: 1px solid var(--border);
-    border-radius: 16px; overflow: auto;
+    border-radius: 14px; padding: 14px 16px;
   }
-  table { width: 100%; border-collapse: collapse; min-width: 980px; }
-  th, td {
-    text-align: left; padding: 14px 14px; border-bottom: 1px solid var(--border);
-    vertical-align: top; font-size: 14px;
-  }
-  th {
+  .stat-card.critical { border-color: rgba(248,81,73,0.4); }
+  .stat-k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat-v { font-size: 24px; font-weight: 700; margin-top: 4px; letter-spacing: -0.03em; }
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* Section label */
+  .section-label {
     color: var(--muted); font-size: 12px; text-transform: uppercase;
-    letter-spacing: 0.04em; font-weight: 600; background: rgba(255,255,255,0.02);
+    letter-spacing: 0.04em; margin: 0 0 10px;
   }
-  tr:last-child td { border-bottom: none; }
-  code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px; color: #c6d4e5;
+
+  /* Card grid */
+  .card-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 12px; margin-bottom: 22px;
   }
+
+  /* Provider/account cards */
+  .pcard {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px 16px;
+    transition: border-color 0.15s;
+  }
+  .pcard.critical { border-color: rgba(248,81,73,0.45); }
+  .pcard.warn { border-color: rgba(210,153,34,0.45); }
+  .pcard.ok { border-color: var(--border); }
+
+  .pcard-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+  }
+  .pcard-title { font-weight: 650; font-size: 14px; letter-spacing: -0.01em; }
+
+  .badge {
+    display: inline-block; border-radius: 999px; padding: 2px 10px;
+    font-size: 11px; font-weight: 600; border: 1px solid var(--border);
+  }
+  .badge.ok { color: var(--green); border-color: rgba(63,185,80,0.35); background: rgba(63,185,80,0.08); }
+  .badge.warn { color: var(--yellow); border-color: rgba(210,153,34,0.35); background: rgba(210,159,34,0.08); }
+  .badge.bad { color: var(--red); border-color: rgba(248,81,73,0.35); background: rgba(248,81,73,0.08); }
+
+  .muted { color: var(--muted); }
+  .ok-text { color: var(--green); }
+  .bad-text { color: var(--red); }
+  .warn-text { color: var(--yellow); }
+
+  /* Limit rows (Z.AI dual limits) */
+  .limit-row { margin-bottom: 8px; }
+  .limit-row-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .limit-label { font-size: 11px; color: var(--muted); }
+  .limit-val { font-size: 16px; font-weight: 700; }
+
+  /* Progress bar */
   .bar {
-    height: 7px; background: #1b2430; border-radius: 999px; overflow: hidden;
-    margin-top: 8px; width: 160px; max-width: 100%;
+    height: 5px; background: #1b2430; border-radius: 999px; overflow: hidden;
+    margin: 4px 0;
   }
-  .bar > span { display: block; height: 100%; background: linear-gradient(90deg, #3fb950, #6cb6ff); }
+  .bar > span { display: block; height: 100%; border-radius: 999px; }
+  .bar.ok > span { background: linear-gradient(90deg, #3fb950, #6cb6ff); }
+  .bar.warn > span { background: #d29922; }
   .bar.bad > span { background: linear-gradient(90deg, #f85149, #ff7b72); }
-  .bar.warn > span { background: linear-gradient(90deg, #d29922, #e3b341); }
+  .bar-sub { font-size: 11px; color: var(--muted); }
+
+  /* Sparkline */
   .spark { display: flex; align-items: flex-end; gap: 2px; height: 28px; }
   .spark i {
     display: block; width: 4px; border-radius: 2px 2px 0 0;
     background: #3d4f66; min-height: 2px;
   }
-  .spark i.fail { background: #f85149; }
-  .pill {
-    display: inline-block; border-radius: 999px; padding: 2px 8px;
-    font-size: 12px; border: 1px solid var(--border); background: #152031;
-  }
-  .pill.ok { color: var(--green); border-color: rgba(63,185,80,0.35); }
-  .pill.bad { color: var(--red); border-color: rgba(248,81,73,0.35); }
-  .pill.warn { color: var(--yellow); border-color: rgba(210,153,34,0.35); }
-  .email { font-weight: 560; }
-  .line2 { margin-top: 4px; font-size: 12px; color: var(--muted); }
+  .spark i.fail { background: var(--red); }
+  .spark i.peak { background: var(--accent); }
+
+  /* Model chips */
   .model-chip {
     display: inline-block; background: var(--chip); border: 1px solid var(--border);
     border-radius: 999px; padding: 2px 8px; margin: 0 4px 4px 0; font-size: 11px; color: #b7c6d8;
   }
-  .quota-main { font-size: 15px; font-weight: 600; margin-top: 4px; }
-  .quota-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
-  .wallets {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 12px; margin-bottom: 18px;
+  /* Details toggle */
+  .details-toggle {
+    font-size: 11px; color: var(--accent); cursor: pointer; margin-top: 10px;
+    border-top: 1px solid var(--border); padding-top: 8px;
+    user-select: none;
   }
-  .wallet-card h3 {
-    margin: 0 0 8px; font-size: 15px; font-weight: 650; letter-spacing: -0.02em;
+  .details-toggle:hover { color: #8ec8ff; }
+  .details-body { display: none; margin-top: 10px; }
+  .pcard[data-expanded="true"] .details-body { display: block; }
+  .pcard[data-expanded="true"] .details-toggle::before { content: '▴ свернуть'; }
+  .pcard[data-expanded="false"] .details-toggle::before { content: '▾ детали'; }
+
+  .details-section {
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.04em; margin: 10px 0 6px;
   }
-  .wallet-card .big {
-    font-size: 28px; font-weight: 700; letter-spacing: -0.03em; margin: 4px 0;
+  .details-row {
+    display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px;
   }
-  .section-label {
-    color: var(--muted); font-size: 12px; text-transform: uppercase;
-    letter-spacing: 0.04em; margin: 4px 0 10px;
+  .details-mono {
+    font-size: 11px; color: #b7c6d8; line-height: 1.7;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .details-src {
+    font-size: 10px; color: #3d4f66; margin-top: 8px;
+  }
+
+  /* Mobile */
+  @media (max-width: 720px) {
+    .wrap { padding: 18px 12px 36px; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .card-grid { grid-template-columns: 1fr; }
+    h1 { font-size: 22px; }
   }
 </style>
 </head>
@@ -132,44 +177,24 @@
   <div class="wrap">
     <header>
       <div>
-        <h1>Usage · raclaw</h1>
-        <div class="sub">CPA · SuperGrok · токены · wallets: DeepSeek + OpenRouter + Z.AI</div>
+        <h1>Мои подписки</h1>
+        <div class="sub" id="updated">обновлено: —</div>
       </div>
-      <div class="actions">
-        <button onclick="refresh(false)">Обновить</button>
-        <button onclick="refresh(true)">Обновить + probe</button>
-      </div>
+      <button onclick="refresh()">Обновить</button>
     </header>
 
-    <div class="meta">
-      <span class="chip" id="updated">обновлено: —</span>
-      <span class="chip" id="sourceChip">CPA + Postgres + xAI · wallets</span>
-    </div>
     <div id="errors"></div>
     <div class="stats" id="stats"></div>
-    <div id="wallets" class="wallets"></div>
-    <div class="section-label">Аккаунты CPA</div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Провайдер</th>
-            <th>Аккаунт</th>
-            <th>Статус</th>
-            <th>Остаток / сброс</th>
-            <th>CPA</th>
-            <th>Токены (24ч)</th>
-            <th>Недавно</th>
-            <th>Модели</th>
-          </tr>
-        </thead>
-        <tbody id="rows">
-          <tr><td colspan="8" class="muted">Загрузка…</td></tr>
-        </tbody>
-      </table>
-    </div>
+
+    <div class="section-label">Провайдеры</div>
+    <div class="card-grid" id="providers"></div>
+
+    <div class="section-label">Аккаунты xAI / Codex</div>
+    <div class="card-grid" id="accounts"></div>
   </div>
+
 <script>
+/* ── Utilities ── */
 function fmt(n) {
   if (n == null || n === '') return '—';
   const x = Number(n);
@@ -182,15 +207,15 @@ function parseDate(v) {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
 }
-function fmtDateTime(v) {
-  const d = parseDate(v);
-  if (!d) return v || '—';
-  return pad(d.getUTCDate()) + '.' + pad(d.getUTCMonth()+1) + '.' + d.getUTCFullYear() + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
-}
 function fmtDateShort(v) {
   const d = parseDate(v);
   if (!d) return v || '—';
   return pad(d.getUTCDate()) + '.' + pad(d.getUTCMonth()+1) + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
+}
+function fmtDateTime(v) {
+  const d = parseDate(v);
+  if (!d) return v || '—';
+  return pad(d.getUTCDate()) + '.' + pad(d.getUTCMonth()+1) + '.' + d.getUTCFullYear() + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
 }
 function fmtRelative(v) {
   const d = parseDate(v);
@@ -204,300 +229,112 @@ function fmtRelative(v) {
   const days = Math.round(h / 24);
   return ms >= 0 ? ('через ' + days + ' дн') : (days + ' дн назад');
 }
-function statusClass(status, blocked) {
-  if (blocked) return 'bad';
-  const s = String(status || '').toLowerCase();
-  if (s === 'active') return 'ok';
-  if (s === 'error' || s === 'failed') return 'bad';
-  return 'warn';
+function money(v, digits) {
+  if (v == null || v === '') return '—';
+  const n = Number(v);
+  if (Number.isNaN(n)) return String(v);
+  return n.toLocaleString('ru-RU', { minimumFractionDigits: digits||2, maximumFractionDigits: digits||2 });
 }
-function statusLabel(a, blocked) {
-  if (blocked) return 'заблокирован';
-  if (a.disabled) return 'отключён';
-  if (a.unavailable) return 'недоступен';
-  const s = String(a.status || '').toLowerCase();
-  if (s === 'active') return 'активен';
-  if (s === 'error' || s === 'failed') return 'ошибка';
-  return a.status || '?';
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-function spark(arr) {
+
+/* ── Classify: returns 'critical' | 'warn' | 'ok' ── */
+function classify(item) {
+  // CPA account
+  if (item.provider && item.provider !== 'zai' && item.provider !== 'deepseek' && item.provider !== 'openrouter') {
+    const q = item.quota || {};
+    const credits = q.credits || {};
+    if (item.unavailable || q.team_blocked || (credits.used_percent != null && credits.used_percent >= 100)) {
+      return 'critical';
+    }
+    const rem = credits.remaining_percent;
+    if (rem != null && rem <= 40) return 'warn';
+    return 'ok';
+  }
+  // Z.AI wallet
+  if (item.provider === 'zai' || item.kind === 'coding-quota') {
+    if (!item.ok) return 'critical';
+    const sess = item.session || {};
+    const week = item.weekly || {};
+    const sessRem = sess.remaining_percent;
+    const weekRem = week.remaining_percent;
+    let worst = 'ok';
+    if (sessRem != null && sessRem <= 0) worst = 'critical';
+    else if (weekRem != null && weekRem <= 0) worst = 'critical';
+    else if (sessRem != null && sessRem <= 40) worst = 'warn';
+    else if (weekRem != null && weekRem <= 40) worst = 'warn';
+    return worst;
+  }
+  // DeepSeek wallet
+  if (item.provider === 'deepseek' || item.kind === 'wallet-balance') {
+    if (!item.ok || !item.is_available) return 'critical';
+    const cny = (item.balance || []).find(function(b){ return b.currency === 'CNY'; });
+    if (cny && cny.total_balance != null) {
+      const bal = Number(cny.total_balance);
+      if (bal < 5) return 'critical';
+      if (bal < 20) return 'warn';
+    }
+    return 'ok';
+  }
+  // OpenRouter wallet
+  if (item.provider === 'openrouter' || item.kind === 'wallet-credits') {
+    if (!item.ok) return 'critical';
+    const rem = item.remaining;
+    if (rem != null) {
+      if (rem < 0.5) return 'critical';
+      if (rem < 2) return 'warn';
+    }
+    return 'ok';
+  }
+  return 'ok';
+}
+
+/* ── Sparkline ── */
+function sparkline(arr) {
   if (!arr || !arr.length) return '<span class="muted">—</span>';
-  const vals = arr.map(x => Number(x.success || 0) + Number(x.failed || 0));
+  const vals = arr.map(function(x) { return Number(x.success || 0) + Number(x.failed || 0); });
   const max = Math.max(1, ...vals);
-  return '<div class="spark">' + arr.slice(-24).map(x => {
+  const last = vals.length - 1;
+  return '<div class="spark">' + arr.slice(-24).map(function(x, i) {
     const total = Number(x.success || 0) + Number(x.failed || 0);
     const h = Math.max(2, Math.round(28 * total / max));
-    const cls = (x.failed || 0) > 0 ? 'fail' : '';
+    const cls = (x.failed || 0) > 0 ? 'fail' : (i === last ? 'peak' : '');
     const title = (x.time || '') + ': ok ' + (x.success || 0) + ', fail ' + (x.failed || 0);
-    return '<i class="' + cls + '" style="height:' + h + 'px" title="' + title + '"></i>';
+    return '<i class="' + cls + '" style="height:' + h + 'px" title="' + escapeHtml(title) + '"></i>';
   }).join('') + '</div>';
 }
-function humanBlockedReason(q) {
-  const raw = String(q.blocked_reason || '').toLowerCase();
-  if (!raw) return '';
-  if (raw.includes('credit pool exhausted') || raw.includes('100%')) return 'пул кредитов исчерпан';
-  if (raw.includes('spending-limit') || raw.includes('run out of credits')) return 'лимит трат / кредиты кончились';
-  if (raw.includes('team_blocked')) return 'team blocked';
-  return '';
+
+/* ── Toggle details ── */
+function toggleDetails(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const expanded = el.getAttribute('data-expanded') === 'true';
+  el.setAttribute('data-expanded', expanded ? 'false' : 'true');
 }
-function quotaCell(a) {
-  const q = a.quota;
-  if (!q) {
-    if (a.next_retry_after) {
-      return '<div class="pill warn">пауза</div><div class="quota-sub">повтор ' + fmtDateShort(a.next_retry_after) + '</div>';
-    }
-    return '<span class="muted">—</span>';
-  }
 
-  // DeepSeek balance display
-  if (q.kind === 'deepseek-balance') {
-    const balances = q.balance || [];
-    const ok = q.ok;
-    const badge = ok ? '<span class="pill ok">OK</span>' : '<span class="pill bad">ERR</span>';
-    let main;
-    if (!ok) {
-      main = '<span class="bad">' + (q.error || 'ошибка') + '</span>';
-    } else if (balances.length === 0) {
-      main = '<span class="muted">нет данных</span>';
-    } else {
-      main = balances.map(function(b) {
-        const total = b.total_balance || '0';
-        const topped = b.topped_up_balance || '0';
-        var sym = b.currency === 'CNY' ? '¥' : '$';
-        return '<span class="quota-main">' + sym + Number(total).toFixed(2) + '</span><div class="quota-sub">' + b.currency + ' · topped ' + sym + Number(topped).toFixed(2) + '</div>';
-      }).join('<div style="margin:6px 0"></div>');
-    }
-    return badge + '<div style="margin-top:6px">' + main + '</div>';
-  }
-
-  const credits = q.credits || {};
-  const blocked = !!q.team_blocked || a.unavailable || (credits.used_percent != null && credits.used_percent >= 100);
-  const creditRem = credits.remaining_percent;
-  const creditUsed = credits.used_percent;
-  const rate = q.rate || {};
-  const ratePct = rate.remaining_tokens_pct;
-  const pct = creditRem != null ? creditRem : ratePct;
-  const barCls = blocked ? 'bad' : (pct != null && pct < 40 ? 'warn' : '');
-  const width = blocked && (creditRem == null || creditRem <= 0)
-    ? 0
-    : (pct != null ? Math.max(0, Math.min(100, pct)) : 100);
-
-  let main;
-  if (creditRem != null) {
-    if (blocked && creditRem <= 0) {
-      main = '0% осталось';
-    } else {
-      main = Number(creditRem).toLocaleString('ru-RU') + '% осталось';
-      if (creditUsed != null) main += ' · ' + Number(creditUsed).toLocaleString('ru-RU') + '% used';
-    }
-  } else if (q.remaining_summary) {
-    main = String(q.remaining_summary)
-      .replace(/\s*\(SuperGrok\/Build pool\)/ig, '')
-      .replace(/\bleft\b/ig, 'осталось');
-  } else if (rate.remaining_tokens != null && rate.limit_tokens != null) {
-    main = fmt(rate.remaining_tokens) + ' / ' + fmt(rate.limit_tokens) + ' tok';
-  } else {
-    main = 'нет данных';
-  }
-
-  const resetAt = q.reset_summary || credits.period_end || a.next_retry_after;
-  const rel = fmtRelative(resetAt);
-  const resetLine = resetAt
-    ? ('сброс ' + fmtDateShort(resetAt) + (rel ? ' · ' + rel : ''))
-    : 'сброс: неизвестно';
-  const reason = humanBlockedReason(q);
-  const badge = blocked
-    ? '<span class="pill bad">BLOCKED</span>'
-    : '<span class="pill ok">OK</span>';
-
-  return badge
-    + '<div class="quota-main">' + main + '</div>'
-    + '<div class="bar ' + barCls + '"><span style="width:' + width + '%"></span></div>'
-    + '<div class="quota-sub">' + resetLine + '</div>'
-    + (reason ? '<div class="quota-sub">' + reason + '</div>' : '');
-}
-async function refresh(force) {
-  if (force) await fetch('/api/refresh', { method: 'POST' });
+/* ── Load / Refresh ── */
+async function refresh() {
+  try { await fetch('/api/refresh', { method: 'POST' }); } catch(e) {}
   await load();
 }
 async function load() {
   const res = await fetch('/api/summary');
   const data = await res.json();
-  const qUpdated = data.providers && data.providers.cpa && data.providers.cpa.quota_probe_updated_at;
+
   document.getElementById('updated').textContent =
-    'обновлено: ' + fmtDateTime(data.updated_at) +
-    (qUpdated ? ' · probe: ' + fmtDateShort(qUpdated) : '');
+    'обновлено: ' + fmtDateTime(data.updated_at);
 
   const errs = data.errors || [];
   document.getElementById('errors').innerHTML = errs.map(function(e) {
-    return '<div class="err">' + e + '</div>';
+    return '<div class="err">' + escapeHtml(e) + '</div>';
   }).join('');
 
-  const accounts = (data.accounts || []).filter(function(a) {
-    return a.provider !== 'deepseek' && a.email !== 'deepseek-main';
-  });
-  const wallets = data.wallets || {};
-  const active = accounts.filter(function(a) {
-    return a.status === 'active' && !a.disabled && !a.unavailable && !(a.quota && a.quota.team_blocked);
-  }).length;
-  const blocked = accounts.filter(function(a) {
-    const used = a.quota && a.quota.credits ? a.quota.credits.used_percent : null;
-    return a.unavailable || (a.quota && a.quota.team_blocked) || (used != null && used >= 100);
-  }).length;
-  const tokens = accounts.reduce(function(s,a){ return s + (a.tokens_total||0); }, 0);
-  const success = accounts.reduce(function(s,a){ return s + (a.success||0); }, 0);
-  const failed = accounts.reduce(function(s,a){ return s + (a.failed||0); }, 0);
-
-  document.getElementById('stats').innerHTML =
-    '<div class="card"><div class="k">Аккаунты CPA</div><div class="v">' + accounts.length + '</div><div class="muted">' + active + ' активных · ' + blocked + ' blocked</div></div>' +
-    '<div class="card"><div class="k">Успешные</div><div class="v">' + fmt(success) + '</div><div class="muted">счётчики CPA</div></div>' +
-    '<div class="card"><div class="k">Ошибки</div><div class="v">' + fmt(failed) + '</div><div class="muted">счётчики CPA</div></div>' +
-    '<div class="card"><div class="k">Токены CPA (24ч)</div><div class="v">' + fmt(tokens) + '</div><div class="muted">usage_records</div></div>';
-
-  function money(v, digits) {
-    if (v == null || v === '') return '—';
-    const n = Number(v);
-    if (Number.isNaN(n)) return String(v);
-    return n.toLocaleString('ru-RU', { minimumFractionDigits: digits||2, maximumFractionDigits: digits||2 });
-  }
-  const order = ['zai', 'deepseek', 'openrouter'].concat(Object.keys(wallets).filter(function(k){
-    return k !== 'deepseek' && k !== 'openrouter' && k !== 'zai';
-  }));
-  const walletCards = order.filter(function(k){ return wallets[k]; }).map(function(key) {
-    const w = wallets[key] || {};
-
-    if (key === 'zai' || w.provider === 'zai') {
-      const sess = w.session || {};
-      const week = w.weekly || {};
-      const mcp = w.mcp || {};
-      const remS = sess.remaining_percent;
-      const remW = week.remaining_percent;
-      const usedS = sess.used_percent;
-      const usedW = week.used_percent;
-      const main = (remS != null)
-        ? (Number(remS).toLocaleString('ru-RU') + '% · 5h')
-        : '—';
-      const badge = w.ok ? '<span class="pill ok">plan ' + (w.level || '?') + '</span>' : '<span class="pill bad">error</span>';
-      function bar(pct, bad) {
-        const p = (pct == null) ? 0 : Math.max(0, Math.min(100, Number(pct)));
-        const cls = bad ? 'bad' : (p < 40 ? 'warn' : '');
-        return '<div class="bar ' + cls + '"><span style="width:' + p + '%"></span></div>';
-      }
-      const blocked = (remS != null && remS <= 0) || (remW != null && remW <= 0);
-      return '<div class="card wallet-card">' +
-        '<h3>Z.AI · GLM Coding</h3>' +
-        '<div>' + badge + (blocked ? ' · <span class="bad">лимит</span>' : '') + '</div>' +
-        '<div class="big">' + main + '</div>' +
-        '<div class="line2">короткий лимит (5h)' +
-          (usedS != null ? (' · used ' + Number(usedS).toLocaleString('ru-RU') + '%') : '') + '</div>' +
-        bar(remS, remS != null && remS <= 0) +
-        '<div class="quota-main" style="margin-top:10px">week ' +
-          (remW != null ? (Number(remW).toLocaleString('ru-RU') + '% left') : '—') +
-          (usedW != null ? (' · used ' + Number(usedW).toLocaleString('ru-RU') + '%') : '') +
-        '</div>' +
-        bar(remW, remW != null && remW <= 0) +
-        '<div class="quota-sub">сброс 5h: ' + (sess.next_reset_at ? fmtDateShort(sess.next_reset_at) + ' · ' + fmtRelative(sess.next_reset_at) : '—') + '</div>' +
-        '<div class="quota-sub">сброс week: ' + (week.next_reset_at ? fmtDateShort(week.next_reset_at) + ' · ' + fmtRelative(week.next_reset_at) : '—') + '</div>' +
-        '<div class="quota-sub">' + (mcp.summary || 'MCP —') +
-          (mcp.next_reset_at ? (' · reset ' + fmtDateShort(mcp.next_reset_at)) : '') + '</div>' +
-        (w.error ? '<div class="quota-sub bad">' + w.error + '</div>' : '') +
-        '<div class="quota-sub">не CPA · /api/monitor/usage/quota/limit</div>' +
-      '</div>';
-    }
-
-    if (key === 'deepseek' || w.provider === 'deepseek') {
-      const bals = w.balance || [];
-      const cny = bals.find(function(b){ return b.currency === 'CNY'; }) || {};
-      const usd = bals.find(function(b){ return b.currency === 'USD'; }) || {};
-      const main = (cny.total_balance != null)
-        ? ('¥' + Number(cny.total_balance).toFixed(2))
-        : ((usd.total_balance != null) ? ('$' + Number(usd.total_balance).toFixed(2)) : '—');
-      const sub = [];
-      if (cny.total_balance != null) sub.push('CNY topped ¥' + Number(cny.topped_up_balance || 0).toFixed(2));
-      if (usd.total_balance != null) sub.push('USD $' + Number(usd.total_balance || 0).toFixed(2));
-      const spend = w.spend_24h || {};
-      const spent = spend.spent_summary || '—';
-      const baseAt = spend.baseline_at ? ('база ' + fmtDateShort(spend.baseline_at)) : '';
-      const badge = w.ok ? '<span class="pill ok">wallet</span>' : '<span class="pill bad">error</span>';
-      const avail = w.is_available ? '<span class="ok">available</span>' : '<span class="bad">unavailable</span>';
-      return '<div class="card wallet-card">' +
-        '<h3>DeepSeek · баланс</h3>' +
-        '<div>' + badge + ' · ' + avail + '</div>' +
-        '<div class="big">' + main + '</div>' +
-        '<div class="line2">' + (sub.join(' · ') || (w.remaining_summary || '')) + '</div>' +
-        '<div class="quota-main" style="margin-top:10px">расход 24ч: ' + spent + '</div>' +
-        '<div class="quota-sub">' + (baseAt || 'история копится') + (spend.partial ? ' · partial' : '') + '</div>' +
-        (w.error ? '<div class="quota-sub bad">' + w.error + '</div>' : '') +
-        '<div class="quota-sub">не CPA · API balance + snapshots</div>' +
-      '</div>';
-    }
-    if (key === 'openrouter' || w.provider === 'openrouter') {
-      const rem = w.remaining;
-      const main = (rem != null) ? ('$' + money(rem)) : '—';
-      const total = w.total_credits;
-      const used = w.total_usage;
-      const spend = w.spend_24h || {};
-      const spent = w.spent_summary || spend.spent_summary || '—';
-      const daily = w.usage_daily;
-      const weekly = w.usage_weekly;
-      const monthly = w.usage_monthly;
-      const badge = w.ok ? '<span class="pill ok">wallet</span>' : '<span class="pill bad">error</span>';
-      const keys = w.keys || [];
-      let keysHtml = '';
-      if (keys.length) {
-        keysHtml = '<div class="quota-sub" style="margin-top:8px">keys today: ' +
-          keys.slice(0,5).map(function(k){
-            return (k.name || k.label || '?') + ' $' + money(k.usage_daily || 0);
-          }).join(' · ') + '</div>';
-      }
-      return '<div class="card wallet-card">' +
-        '<h3>OpenRouter · credits</h3>' +
-        '<div>' + badge + '</div>' +
-        '<div class="big">' + main + '</div>' +
-        '<div class="line2">остаток · used $' + money(used) + ' / $' + money(total) + '</div>' +
-        '<div class="quota-main" style="margin-top:10px">расход 24ч: ' + spent + '</div>' +
-        '<div class="quota-sub">today all keys $' + money(w.usage_daily_all_keys != null ? w.usage_daily_all_keys : daily) +
-          ' · this key $' + money(daily) +
-          ' · week $' + money(weekly) +
-          ' · month $' + money(monthly) + '</div>' +
-        (spend.baseline_at ? ('<div class="quota-sub">база ' + fmtDateShort(spend.baseline_at) + (spend.partial ? ' · partial' : '') + '</div>') : '') +
-        keysHtml +
-        (w.error ? '<div class="quota-sub bad">' + w.error + '</div>' : '') +
-        '<div class="quota-sub">не CPA · /api/v1/credits + /api/v1/key</div>' +
-      '</div>';
-    }
-    return '';
-  }).join('');
-  document.getElementById('wallets').innerHTML = walletCards || '';
-
-  const rows = accounts.map(function(a) {
-    const credits = (a.quota && a.quota.credits) || {};
-    const isBlocked = !!(a.unavailable || (a.quota && a.quota.team_blocked) || (credits.used_percent != null && credits.used_percent >= 100));
-    const st = '<span class="' + statusClass(a.status, isBlocked) + '">' + statusLabel(a, isBlocked) + '</span>';
-    const req = '<div>' + fmt(a.success) + ' <span class="muted">ok</span></div><div class="line2">' + fmt(a.failed) + ' fail</div>';
-    const tok = fmt(a.tokens_total) + '<div class="line2">in ' + fmt(a.tokens_in) + ' · out ' + fmt(a.tokens_out) + '</div>';
-    let models = '<span class="muted">—</span>';
-    if ((a.models || []).length) {
-      models = (a.models || []).slice(0, 4).map(function(m) {
-        const st = (a.model_stats || []).find(function(x){ return x.model === m; });
-        const title = st ? (m + ': ' + st.requests + ' req, ' + fmt(st.tokens_total) + ' tok') : m;
-        return '<span class="model-chip" title="' + title + '">' + m + '</span>';
-      }).join('');
-    }
-    const last = a.last_seen ? ('last ' + fmtDateShort(a.last_seen)) : '';
-    const sub = [a.account_type || '', last].filter(Boolean).join(' · ');
-    return '<tr>' +
-      '<td><code>' + a.provider + '</code></td>' +
-      '<td><div class="email">' + a.email + '</div><div class="line2">' + sub + '</div></td>' +
-      '<td>' + st + '</td>' +
-      '<td>' + quotaCell(a) + '</td>' +
-      '<td>' + req + '</td>' +
-      '<td>' + tok + '</td>' +
-      '<td>' + spark(a.recent_requests) + '</td>' +
-      '<td>' + models + '</td>' +
-    '</tr>';
-  }).join('');
-  document.getElementById('rows').innerHTML = rows || '<tr><td colspan="8" class="muted">Нет аккаунтов</td></tr>';
+  // Renderers filled in by later tasks
+  document.getElementById('stats').innerHTML = '<div class="muted">stats…</div>';
+  document.getElementById('providers').innerHTML = '<div class="muted">providers…</div>';
+  document.getElementById('accounts').innerHTML = '<div class="muted">accounts…</div>';
 }
 load();
 setInterval(load, 30000);
