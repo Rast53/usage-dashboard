@@ -25,223 +25,321 @@
     color: var(--text);
     min-height: 100vh;
   }
-  .wrap { max-width: 1240px; margin: 0 auto; padding: 28px 18px 48px; }
-  header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
-  h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.02em; }
-  .sub { color: var(--muted); font-size: 14px; margin-top: 6px; }
-  .actions { display: flex; gap: 8px; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 28px 20px 48px; }
+  header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 16px; margin-bottom: 22px; flex-wrap: wrap;
+  }
+  h1 { margin: 0; font-size: 28px; letter-spacing: -0.03em; }
+  .sub { color: var(--muted); margin-top: 6px; font-size: 14px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   button {
-    background: var(--card);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 8px 12px;
-    cursor: pointer;
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; cursor: pointer; font-size: 14px;
   }
   button:hover { border-color: var(--accent); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
-  .card {
-    background: color-mix(in srgb, var(--card) 92%, black);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 14px 16px;
+  .meta {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    margin-bottom: 18px; color: var(--muted); font-size: 13px;
   }
-  .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-  .v { font-size: 22px; font-weight: 650; margin-top: 6px; }
-  .muted { color: var(--muted); }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; font-size: 14px; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .chip {
     display: inline-flex; align-items: center; gap: 6px;
     background: var(--chip); border: 1px solid var(--border);
-    border-radius: 999px; padding: 2px 8px; font-size: 12px; color: var(--muted);
+    border-radius: 999px; padding: 4px 10px; font-size: 12px; color: var(--muted);
   }
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 18px;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px 16px;
+  }
+  .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .v { font-size: 26px; font-weight: 650; margin-top: 6px; letter-spacing: -0.03em; }
+  .muted { color: var(--muted); }
   .ok { color: var(--green); }
   .bad { color: var(--red); }
   .warn { color: var(--yellow); }
-  .spark { display: flex; gap: 2px; align-items: end; height: 28px; }
-  .spark i {
-    display: block; width: 5px; border-radius: 2px 2px 0 0;
-    background: #3d6ea8; min-height: 2px;
-  }
-  .spark i.fail { background: #a33b3b; }
-  .bar {
-    width: 100%; max-width: 160px; height: 8px; border-radius: 999px;
-    background: #1c2633; overflow: hidden; margin-top: 6px;
-  }
-  .bar > span { display:block; height:100%; background: linear-gradient(90deg,#3fb950,#6cb6ff); }
-  .bar.bad > span { background: #f85149; }
-  .bar.warn > span { background: #d29922; }
-  .note { margin-top: 14px; color: var(--muted); font-size: 13px; line-height: 1.45; }
   .err {
-    margin: 12px 0; padding: 10px 12px; border-radius: 10px;
-    border: 1px solid rgba(248,81,73,.35); background: rgba(248,81,73,.08); color: #ffb4af;
+    background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.25);
+    color: #ffb4af; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px;
   }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .table-wrap {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; overflow: auto;
+  }
+  table { width: 100%; border-collapse: collapse; min-width: 980px; }
+  th, td {
+    text-align: left; padding: 14px 14px; border-bottom: 1px solid var(--border);
+    vertical-align: top; font-size: 14px;
+  }
+  th {
+    color: var(--muted); font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.04em; font-weight: 600; background: rgba(255,255,255,0.02);
+  }
+  tr:last-child td { border-bottom: none; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; color: #c6d4e5;
+  }
+  .bar {
+    height: 7px; background: #1b2430; border-radius: 999px; overflow: hidden;
+    margin-top: 8px; width: 160px; max-width: 100%;
+  }
+  .bar > span { display: block; height: 100%; background: linear-gradient(90deg, #3fb950, #6cb6ff); }
+  .bar.bad > span { background: linear-gradient(90deg, #f85149, #ff7b72); }
+  .bar.warn > span { background: linear-gradient(90deg, #d29922, #e3b341); }
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 28px; }
+  .spark i {
+    display: block; width: 4px; border-radius: 2px 2px 0 0;
+    background: #3d4f66; min-height: 2px;
+  }
+  .spark i.fail { background: #f85149; }
+  .pill {
+    display: inline-block; border-radius: 999px; padding: 2px 8px;
+    font-size: 12px; border: 1px solid var(--border); background: #152031;
+  }
+  .pill.ok { color: var(--green); border-color: rgba(63,185,80,0.35); }
+  .pill.bad { color: var(--red); border-color: rgba(248,81,73,0.35); }
+  .pill.warn { color: var(--yellow); border-color: rgba(210,153,34,0.35); }
+  .email { font-weight: 560; }
+  .line2 { margin-top: 4px; font-size: 12px; color: var(--muted); }
+  .model-chip {
+    display: inline-block; background: var(--chip); border: 1px solid var(--border);
+    border-radius: 999px; padding: 2px 8px; margin: 0 4px 4px 0; font-size: 11px; color: #b7c6d8;
+  }
+  .quota-main { font-size: 15px; font-weight: 600; margin-top: 4px; }
+  .quota-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
 </style>
 </head>
 <body>
   <div class="wrap">
     <header>
       <div>
-        <h1>Usage Dashboard</h1>
-        <div class="sub">CPA multi-account · remaining/reset signals · tokens/models from durable history</div>
+        <h1>Usage · raclaw</h1>
+        <div class="sub">Аккаунты CPA · SuperGrok remaining/reset · токены и модели</div>
       </div>
       <div class="actions">
-        <button onclick="refresh(true)">Refresh + probe</button>
-        <button onclick="load()">Reload</button>
+        <button onclick="refresh(false)">Обновить</button>
+        <button onclick="refresh(true)">Обновить + probe</button>
       </div>
     </header>
 
+    <div class="meta">
+      <span class="chip" id="updated">обновлено: —</span>
+      <span class="chip" id="sourceChip">CPA + Postgres + xAI probe</span>
+    </div>
     <div id="errors"></div>
-    <div class="grid" id="stats"></div>
-
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px;">
-        <div>
-          <div class="k">Accounts</div>
-          <div class="muted" id="updated" style="margin-top:4px;font-size:13px;">—</div>
-        </div>
-        <span class="chip" id="sourceChip">source: cpa + pg + xai probe</span>
-      </div>
-      <div style="overflow-x:auto;">
-        <table>
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>Account</th>
-              <th>Status</th>
-              <th>Remaining / Reset</th>
-              <th>Req</th>
-              <th>Tokens</th>
-              <th>Recent</th>
-              <th>Models</th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
-      <div class="note" id="notes"></div>
+    <div class="stats" id="stats"></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Провайдер</th>
+            <th>Аккаунт</th>
+            <th>Статус</th>
+            <th>Остаток / сброс</th>
+            <th>CPA</th>
+            <th>Токены (24ч)</th>
+            <th>Недавно</th>
+            <th>Модели</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="8" class="muted">Загрузка…</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
-
 <script>
 function fmt(n) {
-  n = Number(n || 0);
-  if (Math.abs(n) >= 1_000_000) return (n/1_000_000).toFixed(1) + 'M';
-  if (Math.abs(n) >= 1_000) return (n/1_000).toFixed(1) + 'k';
-  return String(n);
+  if (n == null || n === '') return '—';
+  const x = Number(n);
+  if (Number.isNaN(x)) return String(n);
+  return x.toLocaleString('ru-RU');
 }
-function statusClass(s, blocked) {
+function pad(n) { return String(n).padStart(2, '0'); }
+function parseDate(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function fmtDateTime(v) {
+  const d = parseDate(v);
+  if (!d) return v || '—';
+  return pad(d.getUTCDate()) + '.' + pad(d.getUTCMonth()+1) + '.' + d.getUTCFullYear() + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
+}
+function fmtDateShort(v) {
+  const d = parseDate(v);
+  if (!d) return v || '—';
+  return pad(d.getUTCDate()) + '.' + pad(d.getUTCMonth()+1) + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
+}
+function fmtRelative(v) {
+  const d = parseDate(v);
+  if (!d) return '';
+  const ms = d.getTime() - Date.now();
+  const abs = Math.abs(ms);
+  const min = Math.round(abs / 60000);
+  if (min < 60) return ms >= 0 ? ('через ' + min + ' мин') : (min + ' мин назад');
+  const h = Math.round(min / 60);
+  if (h < 48) return ms >= 0 ? ('через ' + h + ' ч') : (h + ' ч назад');
+  const days = Math.round(h / 24);
+  return ms >= 0 ? ('через ' + days + ' дн') : (days + ' дн назад');
+}
+function statusClass(status, blocked) {
   if (blocked) return 'bad';
-  if (!s) return 'warn';
-  s = String(s).toLowerCase();
+  const s = String(status || '').toLowerCase();
   if (s === 'active') return 'ok';
-  if (s.includes('fail') || s.includes('error') || s.includes('disable')) return 'bad';
+  if (s === 'error' || s === 'failed') return 'bad';
   return 'warn';
 }
-function spark(recent) {
-  if (!recent || !recent.length) return '<span class="muted">—</span>';
-  const max = Math.max(1, ...recent.map(x => (x.success||0) + (x.failed||0)));
-  return '<div class="spark">' + recent.map(x => {
-    const total = (x.success||0) + (x.failed||0);
-    const h = Math.max(2, Math.round((total / max) * 28));
-    const cls = (x.failed||0) > 0 ? 'fail' : '';
-    return `<i class="${cls}" style="height:${h}px" title="${x.time}: ok ${x.success||0}, fail ${x.failed||0}"></i>`;
+function statusLabel(a, blocked) {
+  if (blocked) return 'заблокирован';
+  if (a.disabled) return 'отключён';
+  if (a.unavailable) return 'недоступен';
+  const s = String(a.status || '').toLowerCase();
+  if (s === 'active') return 'активен';
+  if (s === 'error' || s === 'failed') return 'ошибка';
+  return a.status || '?';
+}
+function spark(arr) {
+  if (!arr || !arr.length) return '<span class="muted">—</span>';
+  const vals = arr.map(x => Number(x.success || 0) + Number(x.failed || 0));
+  const max = Math.max(1, ...vals);
+  return '<div class="spark">' + arr.slice(-24).map(x => {
+    const total = Number(x.success || 0) + Number(x.failed || 0);
+    const h = Math.max(2, Math.round(28 * total / max));
+    const cls = (x.failed || 0) > 0 ? 'fail' : '';
+    const title = (x.time || '') + ': ok ' + (x.success || 0) + ', fail ' + (x.failed || 0);
+    return '<i class="' + cls + '" style="height:' + h + 'px" title="' + title + '"></i>';
   }).join('') + '</div>';
+}
+function humanBlockedReason(q) {
+  const raw = String(q.blocked_reason || '').toLowerCase();
+  if (!raw) return '';
+  if (raw.includes('credit pool exhausted') || raw.includes('100%')) return 'пул кредитов исчерпан';
+  if (raw.includes('spending-limit') || raw.includes('run out of credits')) return 'лимит трат / кредиты кончились';
+  if (raw.includes('team_blocked')) return 'team blocked';
+  return '';
 }
 function quotaCell(a) {
   const q = a.quota;
   if (!q) {
     if (a.next_retry_after) {
-      return `<div class="warn">cooldown</div><div class="muted" style="font-size:12px">retry ${a.next_retry_after}</div>`;
+      return '<div class="pill warn">пауза</div><div class="quota-sub">повтор ' + fmtDateShort(a.next_retry_after) + '</div>';
     }
     return '<span class="muted">—</span>';
   }
   const credits = q.credits || {};
   const blocked = !!q.team_blocked || a.unavailable || (credits.used_percent != null && credits.used_percent >= 100);
-  const rate = q.rate || {};
-  const remTok = rate.remaining_tokens;
-  const limTok = rate.limit_tokens;
-  // Primary bar = SuperGrok/Build remaining %; fallback to API rate-limit remaining %
   const creditRem = credits.remaining_percent;
   const creditUsed = credits.used_percent;
+  const rate = q.rate || {};
   const ratePct = rate.remaining_tokens_pct;
   const pct = creditRem != null ? creditRem : ratePct;
-  const barCls = blocked ? 'bad' : (pct != null && pct < 15 ? 'warn' : (pct != null && pct < 40 ? 'warn' : ''));
-  const width = blocked && (creditRem == null || creditRem <= 0) ? 0 : (pct != null ? Math.max(0, Math.min(100, pct)) : 100);
-  let remText = q.remaining_summary;
-  if (!remText) {
-    if (creditRem != null) remText = `${creditRem}% left · used ${creditUsed ?? '?'}%`;
-    else if (remTok != null) remText = `${fmt(remTok)}/${fmt(limTok)} tok`;
-    else remText = 'unknown';
+  const barCls = blocked ? 'bad' : (pct != null && pct < 40 ? 'warn' : '');
+  const width = blocked && (creditRem == null || creditRem <= 0)
+    ? 0
+    : (pct != null ? Math.max(0, Math.min(100, pct)) : 100);
+
+  let main;
+  if (creditRem != null) {
+    if (blocked && creditRem <= 0) {
+      main = '0% осталось';
+    } else {
+      main = Number(creditRem).toLocaleString('ru-RU') + '% осталось';
+      if (creditUsed != null) main += ' · ' + Number(creditUsed).toLocaleString('ru-RU') + '% used';
+    }
+  } else if (q.remaining_summary) {
+    main = String(q.remaining_summary)
+      .replace(/\s*\(SuperGrok\/Build pool\)/ig, '')
+      .replace(/\bleft\b/ig, 'осталось');
+  } else if (rate.remaining_tokens != null && rate.limit_tokens != null) {
+    main = fmt(rate.remaining_tokens) + ' / ' + fmt(rate.limit_tokens) + ' tok';
+  } else {
+    main = 'нет данных';
   }
-  const resetText = q.reset_summary || credits.period_end || a.next_retry_after || 'unknown';
-  const tier = q.tier != null ? `tier ${q.tier}` : '';
-  const rateNote = (remTok != null && limTok != null)
-    ? `<div class="muted" style="font-size:11px;margin-top:2px">api window: ${fmt(remTok)}/${fmt(limTok)} tok</div>`
-    : '';
-  return `
-    <div class="${blocked ? 'bad' : 'ok'}">${blocked ? 'BLOCKED' : 'OK'}${tier ? ' · ' + tier : ''}</div>
-    <div style="font-size:12px;margin-top:2px">${remText}</div>
-    <div class="bar ${barCls}"><span style="width:${width}%"></span></div>
-    <div class="muted" style="font-size:12px;margin-top:4px">reset: ${resetText}</div>
-    ${rateNote}
-    ${q.blocked_reason ? `<div class="muted" style="font-size:11px;margin-top:2px">${q.blocked_reason}</div>` : ''}
-  `;
+
+  const resetAt = q.reset_summary || credits.period_end || a.next_retry_after;
+  const rel = fmtRelative(resetAt);
+  const resetLine = resetAt
+    ? ('сброс ' + fmtDateShort(resetAt) + (rel ? ' · ' + rel : ''))
+    : 'сброс: неизвестно';
+  const reason = humanBlockedReason(q);
+  const badge = blocked
+    ? '<span class="pill bad">BLOCKED</span>'
+    : '<span class="pill ok">OK</span>';
+
+  return badge
+    + '<div class="quota-main">' + main + '</div>'
+    + '<div class="bar ' + barCls + '"><span style="width:' + width + '%"></span></div>'
+    + '<div class="quota-sub">' + resetLine + '</div>'
+    + (reason ? '<div class="quota-sub">' + reason + '</div>' : '');
 }
-async function refresh(force=false) {
+async function refresh(force) {
   if (force) await fetch('/api/refresh', { method: 'POST' });
   await load();
 }
 async function load() {
   const res = await fetch('/api/summary');
   const data = await res.json();
-  const qUpdated = data.providers?.cpa?.quota_probe_updated_at;
+  const qUpdated = data.providers && data.providers.cpa && data.providers.cpa.quota_probe_updated_at;
   document.getElementById('updated').textContent =
-    'updated: ' + (data.updated_at || '—') + (qUpdated ? ' · quota probe: ' + qUpdated : '');
+    'обновлено: ' + fmtDateTime(data.updated_at) +
+    (qUpdated ? ' · probe: ' + fmtDateShort(qUpdated) : '');
+
   const errs = data.errors || [];
-  document.getElementById('errors').innerHTML = errs.map(e => `<div class="err">${e}</div>`).join('');
-  document.getElementById('notes').innerHTML = (data.notes || []).map(n => `• ${n}`).join('<br/>');
+  document.getElementById('errors').innerHTML = errs.map(function(e) {
+    return '<div class="err">' + e + '</div>';
+  }).join('');
 
   const accounts = data.accounts || [];
-  const active = accounts.filter(a => a.status === 'active' && !a.disabled && !a.unavailable).length;
-  const blocked = accounts.filter(a => a.unavailable || a.quota?.team_blocked).length;
-  const tokens = accounts.reduce((s,a)=>s+(a.tokens_total||0),0);
-  const success = accounts.reduce((s,a)=>s+(a.success||0),0);
-  const failed = accounts.reduce((s,a)=>s+(a.failed||0),0);
-  document.getElementById('stats').innerHTML = `
-    <div class="card"><div class="k">Accounts</div><div class="v">${accounts.length}</div><div class="muted">${active} active · ${blocked} blocked</div></div>
-    <div class="card"><div class="k">Success</div><div class="v">${fmt(success)}</div><div class="muted">CPA counters</div></div>
-    <div class="card"><div class="k">Failed</div><div class="v">${fmt(failed)}</div><div class="muted">CPA counters</div></div>
-    <div class="card"><div class="k">Tokens (24h)</div><div class="v">${fmt(tokens)}</div><div class="muted">usage_records</div></div>
-  `;
+  const active = accounts.filter(function(a) {
+    return a.status === 'active' && !a.disabled && !a.unavailable && !(a.quota && a.quota.team_blocked);
+  }).length;
+  const blocked = accounts.filter(function(a) {
+    const used = a.quota && a.quota.credits ? a.quota.credits.used_percent : null;
+    return a.unavailable || (a.quota && a.quota.team_blocked) || (used != null && used >= 100);
+  }).length;
+  const tokens = accounts.reduce(function(s,a){ return s + (a.tokens_total||0); }, 0);
+  const success = accounts.reduce(function(s,a){ return s + (a.success||0); }, 0);
+  const failed = accounts.reduce(function(s,a){ return s + (a.failed||0); }, 0);
 
-  const rows = accounts.map(a => {
-    const blocked = !!(a.unavailable || a.quota?.team_blocked);
-    const st = `<span class="${statusClass(a.status, blocked)}">${a.status || '?'}</span>${a.disabled ? ' · disabled' : ''}${a.unavailable ? ' · unavailable' : ''}`;
-    const req = `${fmt(a.success)} <span class="muted">ok</span> / ${fmt(a.failed)} <span class="muted">fail</span>`;
-    const tok = `${fmt(a.tokens_total)} <div class="muted" style="font-size:12px">in ${fmt(a.tokens_in)} · out ${fmt(a.tokens_out)} · ${a.requests||0} req / ${a.window_hours||24}h</div>`;
-    const models = (a.models||[]).length
-      ? (a.models||[]).slice(0,4).map(m=>{
-          const st=(a.model_stats||[]).find(x=>x.model===m);
-          const title = st ? `${m}: ${st.requests} req, ${fmt(st.tokens_total)} tok` : m;
-          return `<span class="chip" title="${title}">${m}</span>`;
-        }).join(' ')
-      : '<span class="muted">—</span>';
-    return `<tr>
-      <td><code>${a.provider}</code></td>
-      <td><div>${a.email}</div><div class="muted" style="font-size:12px">${a.account_type || ''}${a.last_seen ? ' · last ' + a.last_seen : ''}</div></td>
-      <td>${st}</td>
-      <td>${quotaCell(a)}</td>
-      <td>${req}</td>
-      <td>${tok}</td>
-      <td>${spark(a.recent_requests)}</td>
-      <td>${models}</td>
-    </tr>`;
+  document.getElementById('stats').innerHTML =
+    '<div class="card"><div class="k">Аккаунты</div><div class="v">' + accounts.length + '</div><div class="muted">' + active + ' активных · ' + blocked + ' blocked</div></div>' +
+    '<div class="card"><div class="k">Успешные</div><div class="v">' + fmt(success) + '</div><div class="muted">счётчики CPA</div></div>' +
+    '<div class="card"><div class="k">Ошибки</div><div class="v">' + fmt(failed) + '</div><div class="muted">счётчики CPA</div></div>' +
+    '<div class="card"><div class="k">Токены (24ч)</div><div class="v">' + fmt(tokens) + '</div><div class="muted">usage_records</div></div>';
+
+  const rows = accounts.map(function(a) {
+    const credits = (a.quota && a.quota.credits) || {};
+    const isBlocked = !!(a.unavailable || (a.quota && a.quota.team_blocked) || (credits.used_percent != null && credits.used_percent >= 100));
+    const st = '<span class="' + statusClass(a.status, isBlocked) + '">' + statusLabel(a, isBlocked) + '</span>';
+    const req = '<div>' + fmt(a.success) + ' <span class="muted">ok</span></div><div class="line2">' + fmt(a.failed) + ' fail</div>';
+    const tok = fmt(a.tokens_total) + '<div class="line2">in ' + fmt(a.tokens_in) + ' · out ' + fmt(a.tokens_out) + '</div>';
+    let models = '<span class="muted">—</span>';
+    if ((a.models || []).length) {
+      models = (a.models || []).slice(0, 4).map(function(m) {
+        const st = (a.model_stats || []).find(function(x){ return x.model === m; });
+        const title = st ? (m + ': ' + st.requests + ' req, ' + fmt(st.tokens_total) + ' tok') : m;
+        return '<span class="model-chip" title="' + title + '">' + m + '</span>';
+      }).join('');
+    }
+    const last = a.last_seen ? ('last ' + fmtDateShort(a.last_seen)) : '';
+    const sub = [a.account_type || '', last].filter(Boolean).join(' · ');
+    return '<tr>' +
+      '<td><code>' + a.provider + '</code></td>' +
+      '<td><div class="email">' + a.email + '</div><div class="line2">' + sub + '</div></td>' +
+      '<td>' + st + '</td>' +
+      '<td>' + quotaCell(a) + '</td>' +
+      '<td>' + req + '</td>' +
+      '<td>' + tok + '</td>' +
+      '<td>' + spark(a.recent_requests) + '</td>' +
+      '<td>' + models + '</td>' +
+    '</tr>';
   }).join('');
-  document.getElementById('rows').innerHTML = rows || '<tr><td colspan="8" class="muted">No accounts</td></tr>';
+  document.getElementById('rows').innerHTML = rows || '<tr><td colspan="8" class="muted">Нет аккаунтов</td></tr>';
 }
 load();
 setInterval(load, 30000);
