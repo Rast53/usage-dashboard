@@ -133,7 +133,7 @@
     <header>
       <div>
         <h1>Usage · raclaw</h1>
-        <div class="sub">CPA · SuperGrok · токены · wallets: DeepSeek + OpenRouter</div>
+        <div class="sub">CPA · SuperGrok · токены · wallets: DeepSeek + OpenRouter + Z.AI</div>
       </div>
       <div class="actions">
         <button onclick="refresh(false)">Обновить</button>
@@ -360,11 +360,51 @@ async function load() {
     if (Number.isNaN(n)) return String(v);
     return n.toLocaleString('ru-RU', { minimumFractionDigits: digits||2, maximumFractionDigits: digits||2 });
   }
-  const order = ['deepseek', 'openrouter'].concat(Object.keys(wallets).filter(function(k){
-    return k !== 'deepseek' && k !== 'openrouter';
+  const order = ['zai', 'deepseek', 'openrouter'].concat(Object.keys(wallets).filter(function(k){
+    return k !== 'deepseek' && k !== 'openrouter' && k !== 'zai';
   }));
   const walletCards = order.filter(function(k){ return wallets[k]; }).map(function(key) {
     const w = wallets[key] || {};
+
+    if (key === 'zai' || w.provider === 'zai') {
+      const sess = w.session || {};
+      const week = w.weekly || {};
+      const mcp = w.mcp || {};
+      const remS = sess.remaining_percent;
+      const remW = week.remaining_percent;
+      const usedS = sess.used_percent;
+      const usedW = week.used_percent;
+      const main = (remS != null)
+        ? (Number(remS).toLocaleString('ru-RU') + '% · 5h')
+        : '—';
+      const badge = w.ok ? '<span class="pill ok">plan ' + (w.level || '?') + '</span>' : '<span class="pill bad">error</span>';
+      function bar(pct, bad) {
+        const p = (pct == null) ? 0 : Math.max(0, Math.min(100, Number(pct)));
+        const cls = bad ? 'bad' : (p < 40 ? 'warn' : '');
+        return '<div class="bar ' + cls + '"><span style="width:' + p + '%"></span></div>';
+      }
+      const blocked = (remS != null && remS <= 0) || (remW != null && remW <= 0);
+      return '<div class="card wallet-card">' +
+        '<h3>Z.AI · GLM Coding</h3>' +
+        '<div>' + badge + (blocked ? ' · <span class="bad">лимит</span>' : '') + '</div>' +
+        '<div class="big">' + main + '</div>' +
+        '<div class="line2">короткий лимит (5h)' +
+          (usedS != null ? (' · used ' + Number(usedS).toLocaleString('ru-RU') + '%') : '') + '</div>' +
+        bar(remS, remS != null && remS <= 0) +
+        '<div class="quota-main" style="margin-top:10px">week ' +
+          (remW != null ? (Number(remW).toLocaleString('ru-RU') + '% left') : '—') +
+          (usedW != null ? (' · used ' + Number(usedW).toLocaleString('ru-RU') + '%') : '') +
+        '</div>' +
+        bar(remW, remW != null && remW <= 0) +
+        '<div class="quota-sub">сброс 5h: ' + (sess.next_reset_at ? fmtDateShort(sess.next_reset_at) + ' · ' + fmtRelative(sess.next_reset_at) : '—') + '</div>' +
+        '<div class="quota-sub">сброс week: ' + (week.next_reset_at ? fmtDateShort(week.next_reset_at) + ' · ' + fmtRelative(week.next_reset_at) : '—') + '</div>' +
+        '<div class="quota-sub">' + (mcp.summary || 'MCP —') +
+          (mcp.next_reset_at ? (' · reset ' + fmtDateShort(mcp.next_reset_at)) : '') + '</div>' +
+        (w.error ? '<div class="quota-sub bad">' + w.error + '</div>' : '') +
+        '<div class="quota-sub">не CPA · /api/monitor/usage/quota/limit</div>' +
+      '</div>';
+    }
+
     if (key === 'deepseek' || w.provider === 'deepseek') {
       const bals = w.balance || [];
       const cny = bals.find(function(b){ return b.currency === 'CNY'; }) || {};

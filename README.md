@@ -56,3 +56,9 @@ MIT
 - Key usage: `GET /api/v1/key` (usage_daily/weekly/monthly)
 - Optional all keys: management key `GET /api/v1/keys`
 - Rolling 24h spend from local snapshots of total_usage (fills in after history exists)
+
+## Z.AI GLM Coding
+- Separate wallet card (not CPA table)
+- Short 5h + weekly token quotas + monthly MCP tools
+- Source: `GET https://api.z.ai/api/monitor/usage/quota/limit`
+- Key: `ZAI_API_KEY` in `/opt/usage-dashboard/env`

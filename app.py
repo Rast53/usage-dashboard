@@ -903,6 +903,240 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
 
 
 
+
+def get_zai_api_key() -> str | None:
+    """Env ZAI_API_KEY > openclaw.json > gateway.systemd.env."""
+    key = os.environ.get("ZAI_API_KEY")
+    if key and len(key) > 10:
+        return key
+    try:
+        oc = json.loads(Path("/root/.openclaw/openclaw.json").read_text())
+        zp = oc.get("models", {}).get("providers", {}).get("zai", {})
+        ak = zp.get("apiKey")
+        if isinstance(ak, str) and len(ak) > 10:
+            return ak
+        if isinstance(ak, dict) and ak.get("source") == "env":
+            key = os.environ.get(ak.get("id", "ZAI_API_KEY"), "")
+            if key and len(key) > 10:
+                return key
+    except Exception:
+        pass
+    for p in (
+        Path("/root/.openclaw/gateway.systemd.env"),
+        Path("/root/.openclaw/credentials/zai.env"),
+    ):
+        try:
+            for line in p.read_text().splitlines():
+                if line.startswith("ZAI_API_KEY=") or line.startswith("GLM_API_KEY="):
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if val and len(val) > 10:
+                        return val
+        except Exception:
+            pass
+    return None
+
+
+def _ms_to_iso(ms: Any) -> str | None:
+    try:
+        v = int(ms)
+        # accept seconds accidentally
+        if v < 10_000_000_000:
+            v *= 1000
+        return datetime.fromtimestamp(v / 1000.0, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return None
+
+
+def _classify_zai_limit(item: dict[str, Any]) -> str:
+    """Map Z.AI limit entry to session|weekly|mcp|other.
+
+    OpenUsage convention:
+    - TOKENS_LIMIT sub-daily (hours) → session (short 5h)
+    - TOKENS_LIMIT multi-day → weekly (long)
+    - TIME_LIMIT → monthly MCP/tools
+    """
+    typ = str(item.get("type") or "").upper()
+    unit = item.get("unit")
+    number = item.get("number")
+    try:
+        unit_i = int(unit) if unit is not None else None
+    except Exception:
+        unit_i = None
+    try:
+        num_i = int(number) if number is not None else None
+    except Exception:
+        num_i = None
+
+    if typ == "TIME_LIMIT":
+        return "mcp"
+    if typ == "TOKENS_LIMIT":
+        # empirical from live API + openusage:
+        # unit=3 number=5 → 5 hours session
+        # unit=6 number=1 → 1 week
+        if unit_i == 3 or (num_i is not None and num_i <= 24 and unit_i is not None and unit_i <= 4):
+            return "session"
+        if unit_i == 6 or (num_i is not None and num_i >= 1 and unit_i is not None and unit_i >= 5):
+            return "weekly"
+        # fallback by nextReset horizon
+        reset = item.get("nextResetTime")
+        try:
+            reset_s = int(reset) / 1000.0
+            horizon_h = (reset_s - datetime.now(timezone.utc).timestamp()) / 3600.0
+            if horizon_h <= 12:
+                return "session"
+            if horizon_h <= 24 * 10:
+                return "weekly"
+        except Exception:
+            pass
+        return "tokens"
+    return "other"
+
+
+def probe_zai_quota() -> dict[str, Any]:
+    """Fetch Z.AI GLM Coding Plan quotas (short session + weekly + MCP).
+
+    Primary: GET https://api.z.ai/api/monitor/usage/quota/limit
+    Optional: GET https://api.z.ai/api/biz/subscription/list
+    """
+    key = get_zai_api_key()
+    result: dict[str, Any] = {
+        "provider": "zai",
+        "email": "zai-main",
+        "probed_at": now_iso(),
+        "ok": False,
+        "kind": "zai-coding-quota",
+        "level": None,
+        "limits": [],
+        "session": None,
+        "weekly": None,
+        "mcp": None,
+        "error": None,
+    }
+    if not key:
+        result["error"] = "ZAI_API_KEY not set"
+        return result
+
+    st, _hdrs, data, err = http_json(
+        "https://api.z.ai/api/monitor/usage/quota/limit",
+        token=key,
+        timeout=15.0,
+    )
+    if st != 200 or not isinstance(data, dict):
+        result["error"] = f"quota/limit API: {st} {err or data}".strip()
+        return result
+
+    # envelope: {code, success, data:{limits, level}}
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    if data.get("success") is False or (data.get("code") not in (None, 200, "200") and data.get("code") != 200):
+        # still try parse if data present
+        if not isinstance(payload, dict):
+            result["error"] = f"quota/limit failed: {data}"
+            return result
+
+    limits = payload.get("limits") or []
+    result["level"] = payload.get("level")
+    result["ok"] = True
+    parsed = []
+    for item in limits:
+        if not isinstance(item, dict):
+            continue
+        kind = _classify_zai_limit(item)
+        used_pct = item.get("percentage")
+        try:
+            used_pct_f = float(used_pct) if used_pct is not None else None
+        except Exception:
+            used_pct_f = None
+        rem_pct = None if used_pct_f is None else round(max(0.0, 100.0 - used_pct_f), 2)
+        entry = {
+            "kind": kind,
+            "type": item.get("type"),
+            "unit": item.get("unit"),
+            "number": item.get("number"),
+            "usage": item.get("usage"),
+            "currentValue": item.get("currentValue"),
+            "remaining": item.get("remaining"),
+            "used_percent": used_pct_f,
+            "remaining_percent": rem_pct,
+            "next_reset_at": _ms_to_iso(item.get("nextResetTime")),
+            "next_reset_ms": item.get("nextResetTime"),
+            "usageDetails": item.get("usageDetails") or [],
+        }
+        # human summary
+        if kind in ("session", "weekly", "tokens") and rem_pct is not None:
+            label = {"session": "5h", "weekly": "week", "tokens": "tokens"}.get(kind, kind)
+            entry["summary"] = f"{rem_pct:.0f}% left ({label})"
+            if used_pct_f is not None:
+                entry["summary"] += f" · used {used_pct_f:.0f}%"
+        elif kind == "mcp":
+            cur = item.get("currentValue")
+            usage_lim = item.get("usage")
+            rem = item.get("remaining")
+            entry["summary"] = f"MCP {cur}/{usage_lim}" + (f" · rem {rem}" if rem is not None else "")
+        else:
+            entry["summary"] = str(item.get("type") or kind)
+        parsed.append(entry)
+        if kind == "session" and result["session"] is None:
+            result["session"] = entry
+        elif kind == "weekly" and result["weekly"] is None:
+            result["weekly"] = entry
+        elif kind == "mcp" and result["mcp"] is None:
+            result["mcp"] = entry
+
+    result["limits"] = parsed
+
+    # remaining_summary for cards
+    parts = []
+    if result.get("session"):
+        parts.append("5h " + str(result["session"].get("remaining_percent")) + "%")
+    if result.get("weekly"):
+        parts.append("week " + str(result["weekly"].get("remaining_percent")) + "%")
+    if result.get("mcp"):
+        parts.append(result["mcp"].get("summary") or "MCP")
+    level = result.get("level") or "?"
+    result["remaining_summary"] = f"plan {level} · " + " · ".join(parts) if parts else f"plan {level}"
+
+    # best-effort subscription name
+    try:
+        st2, _h2, data2, _e2 = http_json(
+            "https://api.z.ai/api/biz/subscription/list",
+            token=key,
+            timeout=5.0,
+        )
+        if st2 == 200 and isinstance(data2, dict):
+            result["subscription"] = data2.get("data") or data2
+    except Exception:
+        pass
+
+    return result
+
+
+def build_zai_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not probe:
+        return None
+    session = probe.get("session") or {}
+    weekly = probe.get("weekly") or {}
+    mcp = probe.get("mcp") or {}
+    return {
+        "provider": "zai",
+        "email": "zai-main",
+        "name": "Z.AI GLM Coding",
+        "kind": "coding-quota",
+        "status": "active" if probe.get("ok") else "error",
+        "ok": bool(probe.get("ok")),
+        "level": probe.get("level"),
+        "session": session,
+        "weekly": weekly,
+        "mcp": mcp,
+        "limits": probe.get("limits") or [],
+        "remaining_summary": probe.get("remaining_summary") or "",
+        "subscription": probe.get("subscription"),
+        "error": probe.get("error"),
+        "probed_at": probe.get("probed_at"),
+        "source": "zai-monitor-quota-limit",
+    }
+
+
+
 def load_auth_file(path_hint: str | None, email: str | None) -> dict[str, Any] | None:
     candidates: list[Path] = []
     if path_hint:
@@ -1258,6 +1492,12 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
                         ds_accounts["openrouter-main"] = or_result
                 except Exception as e:
                     errors.append(f"openrouter-wallet-probe: {e}")
+                try:
+                    zai_result = probe_zai_quota()
+                    if zai_result is not None:
+                        ds_accounts["zai-main"] = zai_result
+                except Exception as e:
+                    errors.append(f"zai-quota-probe: {e}")
                 _quota_cache["accounts"] = ds_accounts
                 _quota_cache["updated_at"] = now_iso()
                 save_json(QUOTA_CACHE_PATH, _quota_cache)
@@ -1362,8 +1602,10 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
     # Wallets (not CPA accounts): DeepSeek + OpenRouter
     ds_quota = quota_accounts.get("deepseek-main") if quota_accounts else None
     or_probe = quota_accounts.get("openrouter-main") if quota_accounts else None
+    zai_probe = quota_accounts.get("zai-main") if quota_accounts else None
     deepseek_wallet = build_deepseek_wallet(ds_quota)
     openrouter_wallet = build_openrouter_wallet(or_probe)
+    zai_wallet = build_zai_wallet(zai_probe)
 
     # Drop any orphan PG rows that look like deepseek (rare historical CPA key traffic)
     accounts = [
@@ -1372,7 +1614,7 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             a.get("source") == "pg-usage-only"
             and any("deepseek" in str(m).lower() for m in (a.get("models") or []))
         )
-        and a.get("provider") not in ("deepseek", "openrouter")
+        and a.get("provider") not in ("deepseek", "openrouter", "zai")
     ]
 
     accounts.sort(key=lambda a: (
@@ -1387,6 +1629,8 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         wallets["deepseek"] = deepseek_wallet
     if openrouter_wallet:
         wallets["openrouter"] = openrouter_wallet
+    if zai_wallet:
+        wallets["zai"] = zai_wallet
 
     return {
         "updated_at": now_iso(),
@@ -1437,16 +1681,18 @@ def poller() -> None:
 
 
 @app.on_event("startup")
-def on_startup() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+def _startup() -> None:
     load_state()
-    try:
-        refresh_once(force_quota=True)
-    except Exception as e:
-        _state["errors"] = [f"startup: {e}"]
-        _state["updated_at"] = now_iso()
-    t = threading.Thread(target=poller, name="usage-poller", daemon=True)
-    t.start()
+    # Do not block uvicorn bind on network probes (xAI/DeepSeek/OpenRouter/Z.AI).
+    def _bg() -> None:
+        try:
+            refresh_once(force_quota=True)
+        except Exception as e:
+            with _lock:
+                _state["errors"] = list(_state.get("errors") or []) + [f"startup-refresh: {e}"]
+                _state["updated_at"] = now_iso()
+    threading.Thread(target=_bg, name="usage-startup-refresh", daemon=True).start()
+    threading.Thread(target=poller, name="usage-poller", daemon=True).start()
 
 
 @app.get("/api/health")
