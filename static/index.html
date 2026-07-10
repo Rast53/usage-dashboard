@@ -394,7 +394,57 @@ function renderZaiCard(w) {
 }
 
 /* ── Provider card stubs (Tasks 4–5) ── */
-function renderDeepseekCard(w) { return ''; }
+function renderDeepseekCard(w) {
+  if (!w) return '';
+  const st = classify(w);
+  const bals = w.balance || [];
+  const cny = bals.find(function(b){ return b.currency === 'CNY'; }) || {};
+  const usd = bals.find(function(b){ return b.currency === 'USD'; }) || {};
+  const mainBal = (cny.total_balance != null)
+    ? ('¥' + Number(cny.total_balance).toFixed(2))
+    : ((usd.total_balance != null) ? ('$' + Number(usd.total_balance).toFixed(2)) : '—');
+  const avail = w.is_available ? '<span class="ok-text">available</span>' : '<span class="bad-text">unavailable</span>';
+  const badge = w.ok ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERR</span>';
+
+  const spend = w.spend_24h || {};
+  const spent = spend.spent != null ? ('¥' + money(spend.spent)) : (spend.spent_summary || '—');
+  const baseAt = spend.baseline_at ? ('база ' + fmtDateShort(spend.baseline_at)) : '';
+
+  const cardId = 'deepseek-card';
+
+  // Details
+  let balDetails = '';
+  bals.forEach(function(b) {
+    const sym = b.currency === 'CNY' ? '¥' : '$';
+    balDetails += '<div class="details-row"><span>' + escapeHtml(b.currency || '') + ' баланс</span><span><b>' + sym + Number(b.total_balance || 0).toFixed(2) + '</b></span></div>';
+    balDetails += '<div class="details-row"><span>topped up</span><span class="muted">' + sym + Number(b.topped_up_balance || 0).toFixed(2) + '</span></div>';
+  });
+
+  const details =
+    '<div class="details-body">' +
+      '<div class="details-section">Балансы</div>' +
+      (balDetails || '<div class="details-row muted">нет данных</div>') +
+      '<div class="details-section">Расход 24ч</div>' +
+      '<div class="details-row"><span>потрачено</span><span><b>' + escapeHtml(String(spent)) + '</b></span></div>' +
+      (baseAt ? '<div class="details-row"><span>baseline</span><span class="muted">' + baseAt + '</span></div>' : '') +
+      (spend.partial ? '<div class="details-row"><span>статус</span><span class="warn-text">partial</span></div>' : '') +
+      '<div class="details-section">Статус</div>' +
+      '<div class="details-row"><span>доступен</span><span>' + avail + '</span></div>' +
+      (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
+      '<div class="details-src">источник: api.deepseek.com/user/balance + snapshots.jsonl</div>' +
+      (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '') +
+    '</div>';
+
+  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
+    '<div class="pcard-head"><span class="pcard-title">DeepSeek · баланс</span>' + badge + '</div>' +
+    '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">баланс</span><span class="limit-val">' + mainBal + '</span></div></div>' +
+    (cny.topped_up_balance != null ? '<div class="bar-sub">topped ¥' + Number(cny.topped_up_balance).toFixed(2) + '</div>' : '') +
+    '<div class="limit-row" style="margin-top:8px"><div class="limit-row-head"><span class="limit-label">расход 24ч</span><span class="limit-val">' + escapeHtml(String(spent)) + '</span></div></div>' +
+    (baseAt ? '<div class="bar-sub">' + baseAt + (spend.partial ? ' · partial' : '') + '</div>' : '') +
+    details +
+    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
+  '</div>';
+}
 function renderOpenrouterCard(w) { return ''; }
 
 /* ── Stats row ── */
