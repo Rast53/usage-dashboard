@@ -42,3 +42,8 @@ Host path: `/opt/usage-dashboard` on aeza-helsinki-claw.
 
 ## License
 MIT
+
+## DeepSeek
+- Balance: `GET https://api.deepseek.com/user/balance`
+- 24h tokens/models: OpenClaw trajectories (`~/.openclaw/agents/**/*.trajectory.jsonl`, `model.completed` with `provider=deepseek`)
+- `tokens_total` = input+output; `cached_tokens` = cacheRead (separate)

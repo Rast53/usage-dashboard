@@ -40,6 +40,9 @@ STATE_PATH = DATA_DIR / "state.json"
 QUOTA_CACHE_PATH = DATA_DIR / "quota_cache.json"
 POLL_SECONDS = int(os.environ.get("USAGE_POLL_SECONDS", "60"))
 QUOTA_PROBE_SECONDS = int(os.environ.get("USAGE_QUOTA_PROBE_SECONDS", "300"))
+OPENCLAW_AGENTS_DIR = Path(os.environ.get("OPENCLAW_AGENTS_DIR", "/root/.openclaw/agents"))
+# DeepSeek direct API usage is not in CPA postgres; aggregate OpenClaw trajectory model.completed events.
+DEEPSEEK_USAGE_SOURCE = os.environ.get("DEEPSEEK_USAGE_SOURCE", "openclaw-trajectories")
 
 app = FastAPI(title="usage.raclaw.ru", version="0.2.0")
 _lock = threading.Lock()
@@ -433,6 +436,140 @@ def probe_deepseek_balance() -> dict[str, Any]:
     result["remaining_summary"] = " \u00b7 ".join(lines) if lines else "no balance info"
     result["reset_summary"] = ""
     return result
+
+
+def _empty_usage_bucket() -> dict[str, Any]:
+    return {
+        "requests": 0,
+        "fail": 0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "tokens_total": 0,
+        "reasoning": 0,
+        "cached": 0,
+        "models": [],
+        "model_stats": [],
+        "last_seen": None,
+        "source": None,
+    }
+
+
+def fetch_deepseek_usage_from_trajectories(
+    window_hours: int = USAGE_WINDOW_HOURS,
+    agents_dir: Path | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Aggregate DeepSeek direct-API usage from OpenClaw trajectory model.completed events.
+
+    OpenClaw calls api.deepseek.com directly, so traffic never lands in CPA usage_records.
+    Trajectory files under agents/*/sessions/*.trajectory.jsonl carry per-call usage.
+
+    tokens_total follows CPA/PG convention: input + output (cacheRead kept separate).
+    """
+    errors: list[str] = []
+    bucket = _empty_usage_bucket()
+    bucket["source"] = "openclaw-trajectories"
+    root = agents_dir or OPENCLAW_AGENTS_DIR
+    if not root.exists():
+        return bucket, [f"openclaw agents dir missing: {root}"]
+
+    try:
+        cutoff = datetime.now(timezone.utc).timestamp() - (window_hours * 3600)
+        # Include files slightly older than window: long-lived trajectories hold recent events.
+        mtime_floor = cutoff - 3600
+        model_map: dict[str, dict[str, int]] = {}
+
+        for path in root.rglob("*.trajectory.jsonl"):
+            try:
+                if path.stat().st_mtime < mtime_floor:
+                    continue
+            except OSError:
+                continue
+            try:
+                with path.open("r", encoding="utf-8", errors="ignore") as fh:
+                    lines = fh.readlines()
+            except OSError:
+                continue
+
+            for line in lines:
+                if "model.completed" not in line or "deepseek" not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if obj.get("type") != "model.completed":
+                    continue
+                if obj.get("provider") != "deepseek":
+                    continue
+
+                ts_raw = obj.get("ts") or ""
+                last_s = None
+                try:
+                    ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    if ts.timestamp() < cutoff:
+                        continue
+                    last_s = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                except Exception:
+                    # Keep event if timestamp unparsable only when file is recent enough.
+                    pass
+
+                usage = (obj.get("data") or {}).get("usage") or {}
+                if not isinstance(usage, dict) or not usage:
+                    continue
+
+                tin = int(usage.get("input") or 0)
+                tout = int(usage.get("output") or 0)
+                tcache = int(usage.get("cacheRead") or 0)
+                treas = int(usage.get("reasoningTokens") or 0)
+                ttot = tin + tout
+
+                bucket["requests"] += 1
+                bucket["tokens_in"] += tin
+                bucket["tokens_out"] += tout
+                bucket["tokens_total"] += ttot
+                bucket["cached"] += tcache
+                bucket["reasoning"] += treas
+
+                model = obj.get("modelId") or obj.get("model") or "unknown"
+                ms = model_map.setdefault(
+                    model,
+                    {
+                        "requests": 0,
+                        "tokens_total": 0,
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "cached": 0,
+                        "reasoning": 0,
+                        "fail": 0,
+                    },
+                )
+                ms["requests"] += 1
+                ms["tokens_total"] += ttot
+                ms["tokens_in"] += tin
+                ms["tokens_out"] += tout
+                ms["cached"] += tcache
+                ms["reasoning"] += treas
+                if last_s and (bucket["last_seen"] is None or last_s > bucket["last_seen"]):
+                    bucket["last_seen"] = last_s
+
+        stats = []
+        for model, ms in sorted(model_map.items(), key=lambda kv: -kv[1]["tokens_total"]):
+            bucket["models"].append(model)
+            stats.append({
+                "model": model,
+                "requests": ms["requests"],
+                "tokens_total": ms["tokens_total"],
+                "tokens_in": ms["tokens_in"],
+                "tokens_out": ms["tokens_out"],
+                "fail": ms["fail"],
+            })
+        bucket["model_stats"] = stats
+    except Exception as e:
+        errors.append(f"deepseek-trajectory-usage: {e}")
+
+    return bucket, errors
 
 
 def load_auth_file(path_hint: str | None, email: str | None) -> dict[str, Any] | None:
@@ -886,41 +1023,86 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         })
 
     # Synthesize DeepSeek account (not from CPA, from env/openclaw.json)
+    # Tokens: prefer OpenClaw trajectories (direct API). Also merge any rare CPA/PG deepseek rows.
+    ds_usage, ds_usage_errors = fetch_deepseek_usage_from_trajectories()
+    errors.extend(ds_usage_errors)
+    # Historical CPA deepseek key rows (if any) — merge into same account.
+    for src, tok in list(usage_by_source.items()):
+        models = [str(m).lower() for m in (tok.get("models") or [])]
+        if any("deepseek" in m for m in models) or str(src).startswith("sk-"):
+            # only merge if models clearly deepseek or known sparse historical key with deepseek models
+            if not any("deepseek" in m for m in models):
+                continue
+            ds_usage["requests"] += int(tok.get("requests") or 0)
+            ds_usage["fail"] += int(tok.get("fail") or 0)
+            ds_usage["tokens_in"] += int(tok.get("tokens_in") or 0)
+            ds_usage["tokens_out"] += int(tok.get("tokens_out") or 0)
+            ds_usage["tokens_total"] += int(tok.get("tokens_total") or 0)
+            ds_usage["reasoning"] += int(tok.get("reasoning") or 0)
+            ds_usage["cached"] += int(tok.get("cached") or 0)
+            for m in tok.get("models") or []:
+                if m and m not in ds_usage["models"]:
+                    ds_usage["models"].append(m)
+            # keep model_stats simple: trajectory-first; append PG leftovers not already present
+            known = {ms.get("model") for ms in ds_usage.get("model_stats") or []}
+            for ms in tok.get("model_stats") or []:
+                if ms.get("model") not in known:
+                    ds_usage.setdefault("model_stats", []).append(ms)
+            ls = tok.get("last_seen")
+            if ls and (ds_usage.get("last_seen") is None or ls > ds_usage["last_seen"]):
+                ds_usage["last_seen"] = ls
+
     ds_quota = quota_accounts.get("deepseek-main") if quota_accounts else None
-    if ds_quota:
+    if ds_quota or ds_usage.get("requests"):
+        ok = bool(ds_quota.get("ok")) if ds_quota else True
         accounts.append({
             "provider": "deepseek",
             "email": "deepseek-main",
             "name": "DeepSeek API",
-            "status": "active" if ds_quota.get("ok") else "error",
-            "status_message": ds_quota.get("error") or "",
+            "status": "active" if ok else "error",
+            "status_message": (ds_quota or {}).get("error") or "",
             "disabled": False,
             "unavailable": False,
             "next_retry_after": None,
             "account_type": "direct-api",
-            "success": 0,
-            "failed": 0,
+            "success": max(int(ds_usage.get("requests") or 0) - int(ds_usage.get("fail") or 0), 0),
+            "failed": int(ds_usage.get("fail") or 0),
             "recent_success": 0,
             "recent_failed": 0,
             "recent_requests": [],
             "last_refresh": None,
-            "last_seen": None,
-            "requests": 0,
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "tokens_total": 0,
-            "reasoning_tokens": 0,
-            "cached_tokens": 0,
-            "models": [],
-            "model_stats": [],
+            "last_seen": ds_usage.get("last_seen"),
+            "requests": int(ds_usage.get("requests") or 0),
+            "tokens_in": int(ds_usage.get("tokens_in") or 0),
+            "tokens_out": int(ds_usage.get("tokens_out") or 0),
+            "tokens_total": int(ds_usage.get("tokens_total") or 0),
+            "reasoning_tokens": int(ds_usage.get("reasoning") or 0),
+            "cached_tokens": int(ds_usage.get("cached") or 0),
+            "models": list(ds_usage.get("models") or []),
+            "model_stats": list(ds_usage.get("model_stats") or []),
             "window_hours": USAGE_WINDOW_HOURS,
             "quota": ds_quota,
-            "source": "deepseek-balance-api",
+            "source": "deepseek-balance+openclaw-trajectories",
         })
         ps = provider_stats["deepseek"]
         ps["accounts"] += 1
-        if ds_quota.get("ok"):
+        if ok:
             ps["active"] += 1
+        ps["success"] += max(int(ds_usage.get("requests") or 0) - int(ds_usage.get("fail") or 0), 0)
+        ps["failed"] += int(ds_usage.get("fail") or 0)
+        ps["tokens_total"] += int(ds_usage.get("tokens_total") or 0)
+        ps["tokens_in"] += int(ds_usage.get("tokens_in") or 0)
+        ps["tokens_out"] += int(ds_usage.get("tokens_out") or 0)
+        ps["requests"] += int(ds_usage.get("requests") or 0)
+
+    # Drop orphan PG rows already folded into deepseek-main
+    accounts = [
+        a for a in accounts
+        if not (
+            a.get("source") == "pg-usage-only"
+            and any("deepseek" in str(m).lower() for m in (a.get("models") or []))
+        )
+    ]
 
     accounts.sort(key=lambda a: (
         0 if a.get("unavailable") or (a.get("quota") or {}).get("team_blocked") else 1,
@@ -945,7 +1127,8 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         "accounts": accounts,
         "errors": errors,
         "notes": [
-            "Tokens/models from cliproxy postgres usage_records (durable), not CPA usage-queue.",
+            "Tokens/models for CPA accounts from cliproxy postgres usage_records (durable), not CPA usage-queue.",
+            "DeepSeek 24h tokens/models from OpenClaw trajectory model.completed (direct api.deepseek.com); cacheRead stored separately in cached_tokens.",
             f"Usage window: last {USAGE_WINDOW_HOURS}h.",
             "xAI SuperGrok/Build remaining% + reset: grok.com GetGrokCreditsConfig (same source as Grok CLI TUI).",
             "Secondary: team_blocked from /v1/me; short-window RPM/TPM from chat rate-limit headers.",
