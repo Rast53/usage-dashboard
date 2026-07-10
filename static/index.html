@@ -111,6 +111,21 @@
   }
   .quota-main { font-size: 15px; font-weight: 600; margin-top: 4px; }
   .quota-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  .wallets {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px; margin-bottom: 18px;
+  }
+  .wallet-card h3 {
+    margin: 0 0 8px; font-size: 15px; font-weight: 650; letter-spacing: -0.02em;
+  }
+  .wallet-card .big {
+    font-size: 28px; font-weight: 700; letter-spacing: -0.03em; margin: 4px 0;
+  }
+  .section-label {
+    color: var(--muted); font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.04em; margin: 4px 0 10px;
+  }
 </style>
 </head>
 <body>
@@ -118,7 +133,7 @@
     <header>
       <div>
         <h1>Usage · raclaw</h1>
-        <div class="sub">Аккаунты CPA · SuperGrok remaining/reset · токены и модели</div>
+        <div class="sub">CPA · SuperGrok remaining/reset · токены · DeepSeek wallet отдельно</div>
       </div>
       <div class="actions">
         <button onclick="refresh(false)">Обновить</button>
@@ -128,10 +143,12 @@
 
     <div class="meta">
       <span class="chip" id="updated">обновлено: —</span>
-      <span class="chip" id="sourceChip">CPA + Postgres + xAI probe</span>
+      <span class="chip" id="sourceChip">CPA + Postgres + xAI · DeepSeek wallet</span>
     </div>
     <div id="errors"></div>
     <div class="stats" id="stats"></div>
+    <div id="wallets" class="wallets"></div>
+    <div class="section-label">Аккаунты CPA</div>
     <div class="table-wrap">
       <table>
         <thead>
@@ -316,7 +333,10 @@ async function load() {
     return '<div class="err">' + e + '</div>';
   }).join('');
 
-  const accounts = data.accounts || [];
+  const accounts = (data.accounts || []).filter(function(a) {
+    return a.provider !== 'deepseek' && a.email !== 'deepseek-main';
+  });
+  const wallets = data.wallets || {};
   const active = accounts.filter(function(a) {
     return a.status === 'active' && !a.disabled && !a.unavailable && !(a.quota && a.quota.team_blocked);
   }).length;
@@ -329,10 +349,42 @@ async function load() {
   const failed = accounts.reduce(function(s,a){ return s + (a.failed||0); }, 0);
 
   document.getElementById('stats').innerHTML =
-    '<div class="card"><div class="k">Аккаунты</div><div class="v">' + accounts.length + '</div><div class="muted">' + active + ' активных · ' + blocked + ' blocked</div></div>' +
+    '<div class="card"><div class="k">Аккаунты CPA</div><div class="v">' + accounts.length + '</div><div class="muted">' + active + ' активных · ' + blocked + ' blocked</div></div>' +
     '<div class="card"><div class="k">Успешные</div><div class="v">' + fmt(success) + '</div><div class="muted">счётчики CPA</div></div>' +
     '<div class="card"><div class="k">Ошибки</div><div class="v">' + fmt(failed) + '</div><div class="muted">счётчики CPA</div></div>' +
-    '<div class="card"><div class="k">Токены (24ч)</div><div class="v">' + fmt(tokens) + '</div><div class="muted">usage_records</div></div>';
+    '<div class="card"><div class="k">Токены CPA (24ч)</div><div class="v">' + fmt(tokens) + '</div><div class="muted">usage_records</div></div>';
+
+  const walletCards = Object.keys(wallets).map(function(key) {
+    const w = wallets[key] || {};
+    if (key === 'deepseek' || w.provider === 'deepseek') {
+      const bals = w.balance || [];
+      const cny = bals.find(function(b){ return b.currency === 'CNY'; }) || {};
+      const usd = bals.find(function(b){ return b.currency === 'USD'; }) || {};
+      const main = (cny.total_balance != null)
+        ? ('¥' + Number(cny.total_balance).toFixed(2))
+        : ((usd.total_balance != null) ? ('$' + Number(usd.total_balance).toFixed(2)) : '—');
+      const sub = [];
+      if (cny.total_balance != null) sub.push('CNY topped ¥' + Number(cny.topped_up_balance || 0).toFixed(2));
+      if (usd.total_balance != null) sub.push('USD $' + Number(usd.total_balance || 0).toFixed(2));
+      const spend = w.spend_24h || {};
+      const spent = spend.spent_summary || '—';
+      const baseAt = spend.baseline_at ? ('база ' + fmtDateShort(spend.baseline_at)) : '';
+      const badge = w.ok ? '<span class="pill ok">wallet</span>' : '<span class="pill bad">error</span>';
+      const avail = w.is_available ? '<span class="ok">available</span>' : '<span class="bad">unavailable</span>';
+      return '<div class="card wallet-card">' +
+        '<h3>DeepSeek · баланс</h3>' +
+        '<div>' + badge + ' · ' + avail + '</div>' +
+        '<div class="big">' + main + '</div>' +
+        '<div class="line2">' + (sub.join(' · ') || (w.remaining_summary || '')) + '</div>' +
+        '<div class="quota-main" style="margin-top:10px">расход 24ч: ' + spent + '</div>' +
+        '<div class="quota-sub">' + (baseAt || 'история копится') + (spend.partial ? ' · partial' : '') + '</div>' +
+        (w.error ? '<div class="quota-sub bad">' + w.error + '</div>' : '') +
+        '<div class="quota-sub">не CPA · API balance + локальные snapshots</div>' +
+      '</div>';
+    }
+    return '';
+  }).join('');
+  document.getElementById('wallets').innerHTML = walletCards || '';
 
   const rows = accounts.map(function(a) {
     const credits = (a.quota && a.quota.credits) || {};

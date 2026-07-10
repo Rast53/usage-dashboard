@@ -44,6 +44,8 @@ Host path: `/opt/usage-dashboard` on aeza-helsinki-claw.
 MIT
 
 ## DeepSeek
+- Separate wallet card (not in CPA accounts table)
 - Balance: `GET https://api.deepseek.com/user/balance`
-- 24h tokens/models: OpenClaw trajectories (`~/.openclaw/agents/**/*.trajectory.jsonl`, `model.completed` with `provider=deepseek`)
-- `tokens_total` = input+output; `cached_tokens` = cacheRead (separate)
+- 24h spend: estimated from local `snapshots.jsonl` (baseline − current)
+- API has no usage history endpoint
+- Endpoint: `GET /api/wallets`

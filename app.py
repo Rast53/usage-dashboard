@@ -50,6 +50,7 @@ _state: dict[str, Any] = {
     "updated_at": None,
     "providers": {},
     "accounts": [],
+    "wallets": {},
     "errors": [],
 }
 _quota_cache: dict[str, Any] = {"updated_at": None, "accounts": {}}
@@ -99,6 +100,7 @@ def save_state(state: dict[str, Any]) -> None:
         f.write(json.dumps({
             "ts": state.get("updated_at"),
             "providers": state.get("providers"),
+            "wallets": state.get("wallets") or {},
             "accounts": [
                 {
                     "provider": a.get("provider"),
@@ -438,138 +440,156 @@ def probe_deepseek_balance() -> dict[str, Any]:
     return result
 
 
-def _empty_usage_bucket() -> dict[str, Any]:
-    return {
-        "requests": 0,
-        "fail": 0,
-        "tokens_in": 0,
-        "tokens_out": 0,
-        "tokens_total": 0,
-        "reasoning": 0,
-        "cached": 0,
-        "models": [],
-        "model_stats": [],
-        "last_seen": None,
-        "source": None,
-    }
+
+def _balance_totals(balance_infos: list[dict[str, Any]] | None) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for b in balance_infos or []:
+        cur = str(b.get("currency") or "?").upper()
+        try:
+            out[cur] = float(b.get("total_balance") or 0)
+        except Exception:
+            out[cur] = 0.0
+    return out
 
 
-def fetch_deepseek_usage_from_trajectories(
+def _extract_deepseek_balance_from_snapshot(obj: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]] | None]:
+    """Return (ts, balance_infos) from a snapshots.jsonl row."""
+    ts = obj.get("ts")
+    wallets = obj.get("wallets") or {}
+    ds = wallets.get("deepseek") if isinstance(wallets, dict) else None
+    if isinstance(ds, dict) and ds.get("balance") is not None:
+        return ts, ds.get("balance")
+    for a in obj.get("accounts") or []:
+        if not isinstance(a, dict):
+            continue
+        if a.get("provider") == "deepseek" or a.get("email") == "deepseek-main":
+            q = a.get("quota") or {}
+            if isinstance(q, dict) and q.get("balance") is not None:
+                return ts, q.get("balance")
+    return ts, None
+
+
+def compute_deepseek_spend_24h(
+    current_balance: list[dict[str, Any]] | None,
     window_hours: int = USAGE_WINDOW_HOURS,
-    agents_dir: Path | None = None,
-) -> tuple[dict[str, Any], list[str]]:
-    """Aggregate DeepSeek direct-API usage from OpenClaw trajectory model.completed events.
+) -> dict[str, Any]:
+    """Estimate 24h spend as baseline_total - current_total from local snapshots.
 
-    OpenClaw calls api.deepseek.com directly, so traffic never lands in CPA usage_records.
-    Trajectory files under agents/*/sessions/*.trajectory.jsonl carry per-call usage.
-
-    tokens_total follows CPA/PG convention: input + output (cacheRead kept separate).
+    Positive spent = balance decreased. Negative = top-up / credit increased.
+    Prefer newest snapshot at/before window start; else earliest in-window (partial).
     """
-    errors: list[str] = []
-    bucket = _empty_usage_bucket()
-    bucket["source"] = "openclaw-trajectories"
-    root = agents_dir or OPENCLAW_AGENTS_DIR
-    if not root.exists():
-        return bucket, [f"openclaw agents dir missing: {root}"]
+    result: dict[str, Any] = {
+        "window_hours": window_hours,
+        "partial": True,
+        "baseline_at": None,
+        "current": _balance_totals(current_balance),
+        "baseline": {},
+        "spent": {},
+        "spent_summary": "недостаточно истории",
+        "note": "spend = baseline - current from local snapshots (DeepSeek API has no usage history)",
+    }
+    if not SNAPSHOT_PATH.exists():
+        result["note"] = "no snapshots yet"
+        return result
+
+    now = datetime.now(timezone.utc)
+    cutoff = now.timestamp() - window_hours * 3600
+    pre_window: tuple[str, list[dict[str, Any]]] | None = None
+    first_in_window: tuple[str, list[dict[str, Any]]] | None = None
+    latest: tuple[str, list[dict[str, Any]]] | None = None
 
     try:
-        cutoff = datetime.now(timezone.utc).timestamp() - (window_hours * 3600)
-        # Include files slightly older than window: long-lived trajectories hold recent events.
-        mtime_floor = cutoff - 3600
-        model_map: dict[str, dict[str, int]] = {}
-
-        for path in root.rglob("*.trajectory.jsonl"):
-            try:
-                if path.stat().st_mtime < mtime_floor:
-                    continue
-            except OSError:
-                continue
-            try:
-                with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                    lines = fh.readlines()
-            except OSError:
-                continue
-
-            for line in lines:
-                if "model.completed" not in line or "deepseek" not in line:
+        with SNAPSHOT_PATH.open("r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
                     continue
                 try:
                     obj = json.loads(line)
                 except Exception:
                     continue
-                if obj.get("type") != "model.completed":
+                ts_raw, bal = _extract_deepseek_balance_from_snapshot(obj)
+                if bal is None:
                     continue
-                if obj.get("provider") != "deepseek":
-                    continue
-
-                ts_raw = obj.get("ts") or ""
-                last_s = None
                 try:
                     ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
                     if ts.tzinfo is None:
                         ts = ts.replace(tzinfo=timezone.utc)
-                    if ts.timestamp() < cutoff:
-                        continue
-                    last_s = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    ts_epoch = ts.timestamp()
+                    ts_s = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 except Exception:
-                    # Keep event if timestamp unparsable only when file is recent enough.
-                    pass
-
-                usage = (obj.get("data") or {}).get("usage") or {}
-                if not isinstance(usage, dict) or not usage:
                     continue
-
-                tin = int(usage.get("input") or 0)
-                tout = int(usage.get("output") or 0)
-                tcache = int(usage.get("cacheRead") or 0)
-                treas = int(usage.get("reasoningTokens") or 0)
-                ttot = tin + tout
-
-                bucket["requests"] += 1
-                bucket["tokens_in"] += tin
-                bucket["tokens_out"] += tout
-                bucket["tokens_total"] += ttot
-                bucket["cached"] += tcache
-                bucket["reasoning"] += treas
-
-                model = obj.get("modelId") or obj.get("model") or "unknown"
-                ms = model_map.setdefault(
-                    model,
-                    {
-                        "requests": 0,
-                        "tokens_total": 0,
-                        "tokens_in": 0,
-                        "tokens_out": 0,
-                        "cached": 0,
-                        "reasoning": 0,
-                        "fail": 0,
-                    },
-                )
-                ms["requests"] += 1
-                ms["tokens_total"] += ttot
-                ms["tokens_in"] += tin
-                ms["tokens_out"] += tout
-                ms["cached"] += tcache
-                ms["reasoning"] += treas
-                if last_s and (bucket["last_seen"] is None or last_s > bucket["last_seen"]):
-                    bucket["last_seen"] = last_s
-
-        stats = []
-        for model, ms in sorted(model_map.items(), key=lambda kv: -kv[1]["tokens_total"]):
-            bucket["models"].append(model)
-            stats.append({
-                "model": model,
-                "requests": ms["requests"],
-                "tokens_total": ms["tokens_total"],
-                "tokens_in": ms["tokens_in"],
-                "tokens_out": ms["tokens_out"],
-                "fail": ms["fail"],
-            })
-        bucket["model_stats"] = stats
+                if ts_epoch < cutoff:
+                    pre_window = (ts_s, bal)
+                    continue
+                if first_in_window is None:
+                    first_in_window = (ts_s, bal)
+                latest = (ts_s, bal)
     except Exception as e:
-        errors.append(f"deepseek-trajectory-usage: {e}")
+        result["note"] = f"snapshot read error: {e}"
+        return result
 
-    return bucket, errors
+    if pre_window is not None:
+        baseline_ts, baseline_balance = pre_window
+        partial = False
+    elif first_in_window is not None:
+        baseline_ts, baseline_balance = first_in_window
+        partial = True
+    else:
+        return result
+
+    cur_bal = current_balance if current_balance is not None else (latest[1] if latest else baseline_balance)
+    cur = _balance_totals(cur_bal)
+    base = _balance_totals(baseline_balance)
+    spent: dict[str, float] = {}
+    for code in sorted(set(cur) | set(base)):
+        spent[code] = round(base.get(code, 0.0) - cur.get(code, 0.0), 4)
+
+    pretty = []
+    for code, val in spent.items():
+        sym = "¥" if code == "CNY" else ("$" if code == "USD" else f"{code} ")
+        if abs(val) < 0.0001:
+            pretty.append(f"{code} 0.00")
+        elif val > 0:
+            pretty.append(f"−{sym}{val:.2f}")
+        else:
+            pretty.append(f"+{sym}{abs(val):.2f}")
+
+    result.update({
+        "partial": partial,
+        "baseline_at": baseline_ts,
+        "baseline": base,
+        "current": cur,
+        "spent": spent,
+        "spent_summary": (" · ".join(pretty) if pretty else "0") + (" (частичная история)" if partial else ""),
+        "note": (
+            "24h spend estimated from local snapshots: baseline_balance - current_balance. "
+            "DeepSeek API does not expose usage history."
+        ),
+    })
+    return result
+
+
+def build_deepseek_wallet(ds_quota: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not ds_quota:
+        return None
+    spend = compute_deepseek_spend_24h(ds_quota.get("balance"))
+    return {
+        "provider": "deepseek",
+        "email": "deepseek-main",
+        "name": "DeepSeek API",
+        "kind": "wallet-balance",
+        "status": "active" if ds_quota.get("ok") else "error",
+        "ok": bool(ds_quota.get("ok")),
+        "is_available": bool(ds_quota.get("is_available")),
+        "balance": ds_quota.get("balance") or [],
+        "remaining_summary": ds_quota.get("remaining_summary") or "",
+        "error": ds_quota.get("error"),
+        "probed_at": ds_quota.get("probed_at"),
+        "spend_24h": spend,
+        "source": "deepseek-balance-api+local-snapshots",
+    }
+
 
 
 def load_auth_file(path_hint: str | None, email: str | None) -> dict[str, Any] | None:
@@ -1022,86 +1042,21 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             "source": "pg-usage-only",
         })
 
-    # Synthesize DeepSeek account (not from CPA, from env/openclaw.json)
-    # Tokens: prefer OpenClaw trajectories (direct API). Also merge any rare CPA/PG deepseek rows.
-    ds_usage, ds_usage_errors = fetch_deepseek_usage_from_trajectories()
-    errors.extend(ds_usage_errors)
-    # Historical CPA deepseek key rows (if any) — merge into same account.
-    for src, tok in list(usage_by_source.items()):
-        models = [str(m).lower() for m in (tok.get("models") or [])]
-        if any("deepseek" in m for m in models) or str(src).startswith("sk-"):
-            # only merge if models clearly deepseek or known sparse historical key with deepseek models
-            if not any("deepseek" in m for m in models):
-                continue
-            ds_usage["requests"] += int(tok.get("requests") or 0)
-            ds_usage["fail"] += int(tok.get("fail") or 0)
-            ds_usage["tokens_in"] += int(tok.get("tokens_in") or 0)
-            ds_usage["tokens_out"] += int(tok.get("tokens_out") or 0)
-            ds_usage["tokens_total"] += int(tok.get("tokens_total") or 0)
-            ds_usage["reasoning"] += int(tok.get("reasoning") or 0)
-            ds_usage["cached"] += int(tok.get("cached") or 0)
-            for m in tok.get("models") or []:
-                if m and m not in ds_usage["models"]:
-                    ds_usage["models"].append(m)
-            # keep model_stats simple: trajectory-first; append PG leftovers not already present
-            known = {ms.get("model") for ms in ds_usage.get("model_stats") or []}
-            for ms in tok.get("model_stats") or []:
-                if ms.get("model") not in known:
-                    ds_usage.setdefault("model_stats", []).append(ms)
-            ls = tok.get("last_seen")
-            if ls and (ds_usage.get("last_seen") is None or ls > ds_usage["last_seen"]):
-                ds_usage["last_seen"] = ls
-
+    # DeepSeek is NOT a CPA account: keep wallet-only (balance + estimated 24h spend).
+    # No tokens/models in the CPA table — DeepSeek API has no usage history endpoint.
     ds_quota = quota_accounts.get("deepseek-main") if quota_accounts else None
-    if ds_quota or ds_usage.get("requests"):
-        ok = bool(ds_quota.get("ok")) if ds_quota else True
-        accounts.append({
-            "provider": "deepseek",
-            "email": "deepseek-main",
-            "name": "DeepSeek API",
-            "status": "active" if ok else "error",
-            "status_message": (ds_quota or {}).get("error") or "",
-            "disabled": False,
-            "unavailable": False,
-            "next_retry_after": None,
-            "account_type": "direct-api",
-            "success": max(int(ds_usage.get("requests") or 0) - int(ds_usage.get("fail") or 0), 0),
-            "failed": int(ds_usage.get("fail") or 0),
-            "recent_success": 0,
-            "recent_failed": 0,
-            "recent_requests": [],
-            "last_refresh": None,
-            "last_seen": ds_usage.get("last_seen"),
-            "requests": int(ds_usage.get("requests") or 0),
-            "tokens_in": int(ds_usage.get("tokens_in") or 0),
-            "tokens_out": int(ds_usage.get("tokens_out") or 0),
-            "tokens_total": int(ds_usage.get("tokens_total") or 0),
-            "reasoning_tokens": int(ds_usage.get("reasoning") or 0),
-            "cached_tokens": int(ds_usage.get("cached") or 0),
-            "models": list(ds_usage.get("models") or []),
-            "model_stats": list(ds_usage.get("model_stats") or []),
-            "window_hours": USAGE_WINDOW_HOURS,
-            "quota": ds_quota,
-            "source": "deepseek-balance+openclaw-trajectories",
-        })
-        ps = provider_stats["deepseek"]
-        ps["accounts"] += 1
-        if ok:
-            ps["active"] += 1
-        ps["success"] += max(int(ds_usage.get("requests") or 0) - int(ds_usage.get("fail") or 0), 0)
-        ps["failed"] += int(ds_usage.get("fail") or 0)
-        ps["tokens_total"] += int(ds_usage.get("tokens_total") or 0)
-        ps["tokens_in"] += int(ds_usage.get("tokens_in") or 0)
-        ps["tokens_out"] += int(ds_usage.get("tokens_out") or 0)
-        ps["requests"] += int(ds_usage.get("requests") or 0)
+    # If probe cache is stale/missing deepseek, try a lightweight probe when forced path already ran;
+    # otherwise use cached value only.
+    deepseek_wallet = build_deepseek_wallet(ds_quota)
 
-    # Drop orphan PG rows already folded into deepseek-main
+    # Drop any orphan PG rows that look like deepseek (rare historical CPA key traffic)
     accounts = [
         a for a in accounts
         if not (
             a.get("source") == "pg-usage-only"
             and any("deepseek" in str(m).lower() for m in (a.get("models") or []))
         )
+        and a.get("provider") != "deepseek"
     ]
 
     accounts.sort(key=lambda a: (
@@ -1110,6 +1065,10 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         -(a["tokens_total"] or 0),
         a["email"] or "",
     ))
+
+    wallets: dict[str, Any] = {}
+    if deepseek_wallet:
+        wallets["deepseek"] = deepseek_wallet
 
     return {
         "updated_at": now_iso(),
@@ -1125,10 +1084,11 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             }
         },
         "accounts": accounts,
+        "wallets": wallets,
         "errors": errors,
         "notes": [
             "Tokens/models for CPA accounts from cliproxy postgres usage_records (durable), not CPA usage-queue.",
-            "DeepSeek 24h tokens/models from OpenClaw trajectory model.completed (direct api.deepseek.com); cacheRead stored separately in cached_tokens.",
+            "DeepSeek is shown separately as wallet balance only; 24h spend estimated from local snapshots (API has no usage history).",
             f"Usage window: last {USAGE_WINDOW_HOURS}h.",
             "xAI SuperGrok/Build remaining% + reset: grok.com GetGrokCreditsConfig (same source as Grok CLI TUI).",
             "Secondary: team_blocked from /v1/me; short-window RPM/TPM from chat rate-limit headers.",
@@ -1198,6 +1158,15 @@ def accounts() -> dict[str, Any]:
 def providers() -> dict[str, Any]:
     with _lock:
         return {"updated_at": _state.get("updated_at"), "providers": _state.get("providers") or {}}
+
+
+@app.get("/api/wallets")
+def wallets() -> dict[str, Any]:
+    with _lock:
+        return {
+            "updated_at": _state.get("updated_at"),
+            "wallets": _state.get("wallets") or {},
+        }
 
 
 @app.get("/api/quota")
