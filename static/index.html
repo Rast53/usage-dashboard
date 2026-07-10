@@ -159,21 +159,35 @@ function quotaCell(a) {
     }
     return '<span class="muted">—</span>';
   }
-  const blocked = !!q.team_blocked || a.unavailable;
+  const credits = q.credits || {};
+  const blocked = !!q.team_blocked || a.unavailable || (credits.used_percent != null && credits.used_percent >= 100);
   const rate = q.rate || {};
   const remTok = rate.remaining_tokens;
   const limTok = rate.limit_tokens;
-  const pct = rate.remaining_tokens_pct;
-  const barCls = blocked ? 'bad' : (pct != null && pct < 15 ? 'warn' : '');
-  const width = blocked ? 0 : (pct != null ? Math.max(0, Math.min(100, pct)) : 100);
-  const remText = q.remaining_summary || (remTok != null ? `${fmt(remTok)}/${fmt(limTok)} tok` : 'unknown');
-  const resetText = q.reset_summary || a.next_retry_after || 'unknown';
+  // Primary bar = SuperGrok/Build remaining %; fallback to API rate-limit remaining %
+  const creditRem = credits.remaining_percent;
+  const creditUsed = credits.used_percent;
+  const ratePct = rate.remaining_tokens_pct;
+  const pct = creditRem != null ? creditRem : ratePct;
+  const barCls = blocked ? 'bad' : (pct != null && pct < 15 ? 'warn' : (pct != null && pct < 40 ? 'warn' : ''));
+  const width = blocked && (creditRem == null || creditRem <= 0) ? 0 : (pct != null ? Math.max(0, Math.min(100, pct)) : 100);
+  let remText = q.remaining_summary;
+  if (!remText) {
+    if (creditRem != null) remText = `${creditRem}% left · used ${creditUsed ?? '?'}%`;
+    else if (remTok != null) remText = `${fmt(remTok)}/${fmt(limTok)} tok`;
+    else remText = 'unknown';
+  }
+  const resetText = q.reset_summary || credits.period_end || a.next_retry_after || 'unknown';
   const tier = q.tier != null ? `tier ${q.tier}` : '';
+  const rateNote = (remTok != null && limTok != null)
+    ? `<div class="muted" style="font-size:11px;margin-top:2px">api window: ${fmt(remTok)}/${fmt(limTok)} tok</div>`
+    : '';
   return `
     <div class="${blocked ? 'bad' : 'ok'}">${blocked ? 'BLOCKED' : 'OK'}${tier ? ' · ' + tier : ''}</div>
     <div style="font-size:12px;margin-top:2px">${remText}</div>
     <div class="bar ${barCls}"><span style="width:${width}%"></span></div>
     <div class="muted" style="font-size:12px;margin-top:4px">reset: ${resetText}</div>
+    ${rateNote}
     ${q.blocked_reason ? `<div class="muted" style="font-size:11px;margin-top:2px">${q.blocked_reason}</div>` : ''}
   `;
 }

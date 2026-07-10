@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import struct
 import threading
 import time
 from collections import defaultdict
@@ -143,41 +144,236 @@ def parse_int(val: Any) -> int | None:
         return None
 
 
-def http_json(url: str, token: str, proxy: str | None = None, method: str = "GET", body: bytes | None = None, timeout: float = 20.0) -> tuple[int | None, dict[str, str], Any, str | None]:
+def http_request(
+    url: str,
+    token: str | None = None,
+    proxy: str | None = None,
+    method: str = "GET",
+    body: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 20.0,
+) -> tuple[int | None, dict[str, str], bytes, str | None]:
     handlers = []
     if proxy:
         handlers.append(urlrequest.ProxyHandler({"http": proxy, "https": proxy}))
     opener = urlrequest.build_opener(*handlers) if handlers else urlrequest.build_opener()
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
-    if body is not None:
-        headers["Content-Type"] = "application/json"
-    req = urlrequest.Request(url, data=body, headers=headers, method=method)
+    hdrs: dict[str, str] = {}
+    if token:
+        hdrs["Authorization"] = f"Bearer {token}"
+    if headers:
+        hdrs.update(headers)
+    req = urlrequest.Request(url, data=body, headers=hdrs, method=method)
     try:
         with opener.open(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-            try:
-                data = json.loads(raw) if raw else None
-            except Exception:
-                data = raw
-            return resp.status, dict(resp.headers.items()), data, None
+            return resp.status, dict(resp.headers.items()), resp.read(), None
     except HTTPError as e:
-        raw = ""
+        raw = b""
         try:
-            raw = e.read().decode("utf-8", errors="replace")
+            raw = e.read()
         except Exception:
             pass
-        try:
-            data = json.loads(raw) if raw else None
-        except Exception:
-            data = raw
-        return e.code, dict(e.headers.items() if e.headers else []), data, raw[:500] or str(e)
+        return e.code, dict(e.headers.items() if e.headers else []), raw, raw[:500].decode("utf-8", errors="replace") or str(e)
     except URLError as e:
-        return None, {}, None, str(e)
+        return None, {}, b"", str(e)
     except Exception as e:
-        return None, {}, None, str(e)
+        return None, {}, b"", str(e)
+
+
+def http_json(
+    url: str,
+    token: str,
+    proxy: str | None = None,
+    method: str = "GET",
+    body: bytes | None = None,
+    timeout: float = 20.0,
+) -> tuple[int | None, dict[str, str], Any, str | None]:
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    st, hdrs, raw, err = http_request(url, token=token, proxy=proxy, method=method, body=body, headers=headers, timeout=timeout)
+    text = raw.decode("utf-8", errors="replace") if raw else ""
+    try:
+        data = json.loads(text) if text else None
+    except Exception:
+        data = text
+    return st, hdrs, data, err
+
+
+def _read_varint(buf: bytes, index: int) -> tuple[int | None, int]:
+    value = 0
+    shift = 0
+    while index < len(buf) and shift < 64:
+        byte = buf[index]
+        index += 1
+        value |= (byte & 0x7F) << shift
+        if byte & 0x80 == 0:
+            return value, index
+        shift += 7
+    return None, index
+
+
+def grpc_web_data_frames(data: bytes) -> list[bytes]:
+    frames: list[bytes] = []
+    index = 0
+    while index + 5 <= len(data):
+        flags = data[index]
+        length = int.from_bytes(data[index + 1 : index + 5], "big")
+        start = index + 5
+        end = start + length
+        if length < 0 or end > len(data):
+            return []
+        if flags & 0x80 == 0:
+            frames.append(data[start:end])
+        index = end
+    return frames
+
+
+def parse_grok_credits_proto(data: bytes, now_ts: float | None = None) -> dict[str, Any]:
+    """Parse GetGrokCreditsConfig protobuf/gRPC-web response.
+
+    Based on CodexBar GrokWebBillingFetcher heuristics + live samples:
+    - creditUsagePercent is fixed32 field path ending in 1 under current period
+    - billingPeriodStart/End are unix seconds at paths [1,4,1] / [1,5,1]
+    """
+    now_ts = now_ts if now_ts is not None else datetime.now(timezone.utc).timestamp()
+    frames = grpc_web_data_frames(data)
+    payloads = frames if frames else ([data] if data else [])
+
+    fixed32: list[tuple[tuple[int, ...], float]] = []
+    varints: list[tuple[tuple[int, ...], int]] = []
+
+    def scan(buf: bytes, depth: int = 0, path: tuple[int, ...] = ()) -> None:
+        idx = 0
+        while idx < len(buf):
+            start = idx
+            key, idx2 = _read_varint(buf, idx)
+            if key is None or key == 0:
+                idx = start + 1
+                continue
+            idx = idx2
+            field = key >> 3
+            wire = key & 0x07
+            fpath = path + (field,)
+            if wire == 0:
+                val, idx = _read_varint(buf, idx)
+                if val is not None:
+                    varints.append((fpath, int(val)))
+            elif wire == 1:
+                if idx + 8 > len(buf):
+                    break
+                idx += 8
+            elif wire == 2:
+                length, idx = _read_varint(buf, idx)
+                if length is None or idx + length > len(buf):
+                    idx = start + 1
+                    continue
+                nested = buf[idx : idx + length]
+                idx += length
+                if depth < 4:
+                    scan(nested, depth + 1, fpath)
+            elif wire == 5:
+                if idx + 4 > len(buf):
+                    break
+                bits = int.from_bytes(buf[idx : idx + 4], "little")
+                idx += 4
+                value = struct.unpack("<f", struct.pack("<I", bits))[0]
+                fixed32.append((fpath, float(value)))
+            else:
+                idx = start + 1
+
+    for payload in payloads:
+        scan(payload)
+
+    percent_candidates = [
+        (path, value)
+        for path, value in fixed32
+        if path and path[-1] == 1 and 0.0 <= value <= 100.0
+    ]
+    used_percent = None
+    if percent_candidates:
+        percent_candidates.sort(key=lambda item: (len(item[0]), item[0]))
+        used_percent = round(float(percent_candidates[0][1]), 2)
+
+    timestamps = [(path, value) for path, value in varints if 1_700_000_000 <= value <= 2_100_000_000]
+    period_start = next((value for path, value in timestamps if list(path) == [1, 4, 1]), None)
+    period_end = next((value for path, value in timestamps if list(path) == [1, 5, 1]), None)
+    if period_end is None:
+        future = [value for _, value in timestamps if value > now_ts]
+        period_end = min(future) if future else None
+    if period_start is None:
+        past = [value for _, value in timestamps if value <= now_ts]
+        period_start = max(past) if past else None
+
+    def iso(ts: int | None) -> str | None:
+        if ts is None:
+            return None
+        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    remaining_percent = None if used_percent is None else round(max(0.0, 100.0 - used_percent), 2)
+    return {
+        "used_percent": used_percent,
+        "remaining_percent": remaining_percent,
+        "period_start_unix": period_start,
+        "period_end_unix": period_end,
+        "period_start": iso(period_start),
+        "period_end": iso(period_end),
+        "frames": len(frames),
+        "raw_len": len(data),
+    }
+
+
+def fetch_grok_credits(token: str, proxy: str | None = None) -> dict[str, Any]:
+    """Fetch SuperGrok/Grok Build credit pool from grok.com gRPC-web endpoint."""
+    url = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig"
+    body = bytes([0x00, 0x00, 0x00, 0x00, 0x00])  # empty protobuf in gRPC-web frame
+    headers = {
+        "Origin": "https://grok.com",
+        "Referer": "https://grok.com/?_s=usage",
+        "Accept": "*/*",
+        "Content-Type": "application/grpc-web+proto",
+        "x-grpc-web": "1",
+        "x-user-agent": "connect-es/2.1.1",
+        "User-Agent": "usage-dashboard/0.3",
+        "x-grok-client-version": "0.2.93",
+    }
+    # Prefer direct first: Cloudflare sometimes blocks proxy fingerprints, but
+    # CPA Dallas proxy also works for these OAuth tokens in practice.
+    attempts: list[str | None] = [None]
+    if proxy and proxy not in attempts:
+        attempts.append(proxy)
+
+    last_error: str | None = None
+    for use_proxy in attempts:
+        st, hdrs, raw, err = http_request(
+            url,
+            token=token,
+            proxy=use_proxy,
+            method="POST",
+            body=body,
+            headers=headers,
+            timeout=20.0,
+        )
+        if st != 200 or not raw:
+            last_error = f"status={st} err={err or ''}".strip()
+            continue
+        grpc_status = header_get(hdrs, "grpc-status")
+        if grpc_status and grpc_status not in ("0", ""):
+            last_error = f"grpc-status={grpc_status} {header_get(hdrs, 'grpc-message') or ''}".strip()
+            continue
+        parsed = parse_grok_credits_proto(raw)
+        if parsed.get("used_percent") is None and parsed.get("period_end") is None:
+            last_error = "protobuf parse failed"
+            continue
+        parsed["ok"] = True
+        parsed["proxy_used"] = use_proxy or "direct"
+        parsed["source"] = "grok.com/GetGrokCreditsConfig"
+        return parsed
+
+    return {
+        "ok": False,
+        "error": last_error or "GetGrokCreditsConfig failed",
+        "source": "grok.com/GetGrokCreditsConfig",
+    }
 
 
 def load_auth_file(path_hint: str | None, email: str | None) -> dict[str, Any] | None:
@@ -219,6 +415,7 @@ def probe_xai_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
         "tier": None,
         "team_id": None,
         "user_id": None,
+        "credits": {},
         "rate": {},
         "cpa": {
             "status": auth_meta.get("status"),
@@ -265,23 +462,58 @@ def probe_xai_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
     result["team_id"] = claims.get("team_id")
     result["user_id"] = claims.get("sub") or claims.get("principal_id")
 
-    # /v1/me for team_blocked
+    # Primary signal: SuperGrok/Grok Build credits (same source as Grok CLI TUI).
+    credits = fetch_grok_credits(token, proxy=proxy)
+    result["credits"] = credits
+    if credits.get("ok"):
+        result["ok"] = True
+        used = credits.get("used_percent")
+        rem = credits.get("remaining_percent")
+        if used is not None and rem is not None:
+            result["remaining_summary"] = f"{rem:g}% left · used {used:g}% (SuperGrok/Build pool)"
+        elif rem is not None:
+            result["remaining_summary"] = f"{rem:g}% left (SuperGrok/Build pool)"
+        else:
+            result["remaining_summary"] = "credits ok (percent missing)"
+        if credits.get("period_end"):
+            result["reset_summary"] = credits["period_end"]
+            result["reset_at"] = credits["period_end"]
+        else:
+            result["reset_summary"] = "unknown credit period end"
+        if used is not None and used >= 100:
+            result["team_blocked"] = True if result["team_blocked"] is None else result["team_blocked"]
+            result["blocked_reason"] = result["blocked_reason"] or "credit pool exhausted (100% used)"
+            result["notes"].append("GetGrokCreditsConfig used_percent=100")
+        result["notes"].append(
+            f"credits from GetGrokCreditsConfig via {credits.get('proxy_used') or 'direct'}"
+        )
+    else:
+        result["notes"].append(f"credits probe failed: {credits.get('error')}")
+
+    # /v1/me for team_blocked / identity
     st, headers, data, err = http_json("https://api.x.ai/v1/me", token, proxy=proxy, timeout=15)
     if st == 200 and isinstance(data, dict):
         result["ok"] = True
-        result["team_blocked"] = bool(data.get("team_blocked"))
+        me_blocked = bool(data.get("team_blocked"))
+        if result["team_blocked"] is None:
+            result["team_blocked"] = me_blocked
+        elif me_blocked:
+            result["team_blocked"] = True
         result["team_id"] = data.get("team_id") or result["team_id"]
         result["user_id"] = data.get("user_id") or result["user_id"]
-        if result["team_blocked"]:
+        if me_blocked:
             result["blocked_reason"] = result["blocked_reason"] or "team_blocked=true"
             result["notes"].append("xAI /v1/me team_blocked=true")
         else:
             result["notes"].append("xAI /v1/me team_blocked=false")
     else:
-        result["error"] = f"/v1/me failed: {st} {err or ''}".strip()
+        if not result.get("error"):
+            result["error"] = f"/v1/me failed: {st} {err or ''}".strip()
+        else:
+            result["notes"].append(f"/v1/me failed: {st} {err or ''}".strip())
 
-    # Rate-limit headers appear on chat/completions, not on /models.
-    # Tiny completion is used only for live accounts; blocked accounts skip spend.
+    # Secondary: short-window RPM/TPM rate-limit headers via tiny chat completion.
+    # Skip when already blocked to avoid useless spend/noise.
     hdrs = headers or {}
     st2, headers2, data2, err2 = None, {}, None, None
     if not result.get("team_blocked"):
@@ -324,19 +556,27 @@ def probe_xai_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
     if rem_tok is not None and limit_tok:
         result["rate"]["remaining_tokens_pct"] = round(100.0 * rem_tok / limit_tok, 2)
 
-    # Interpret what we can honestly say about "remaining usage"
-    if result["team_blocked"]:
-        result["remaining_summary"] = "0 (team blocked / spending-limit)"
-        result["reset_summary"] = result["cpa"].get("next_retry_after") or "unknown weekly/credit reset (not exposed by API)"
-    elif rem_tok is not None and limit_tok is not None:
-        result["remaining_summary"] = f"{rem_tok}/{limit_tok} tokens (rate-limit window)"
-        result["reset_summary"] = reset_tok or reset_req or "rolling window (no reset timestamp from API)"
-    else:
-        result["remaining_summary"] = "unknown (no SuperGrok remaining endpoint)"
-        result["reset_summary"] = result["cpa"].get("next_retry_after") or "unknown"
+    # Fallback summaries only if credits probe did not fill them.
+    if not result.get("remaining_summary"):
+        if result["team_blocked"]:
+            result["remaining_summary"] = "0 (team blocked / spending-limit)"
+        elif rem_tok is not None and limit_tok is not None:
+            result["remaining_summary"] = f"{rem_tok}/{limit_tok} tokens (rate-limit window)"
+        else:
+            result["remaining_summary"] = "unknown"
+    if not result.get("reset_summary"):
+        if result["cpa"].get("next_retry_after"):
+            result["reset_summary"] = result["cpa"]["next_retry_after"]
+        elif reset_tok or reset_req:
+            result["reset_summary"] = reset_tok or reset_req
+        else:
+            result["reset_summary"] = "unknown"
 
+    # Keep rate-limit detail as secondary note, not primary truth.
+    if rem_tok is not None and limit_tok is not None:
+        result["notes"].append(f"API rate-limit window: {rem_tok}/{limit_tok} tokens")
     result["notes"].append(
-        "xAI API does not expose SuperGrok weekly remaining/reset; rate-limit headers are short-window RPM/TPM only."
+        "Primary remaining/reset = SuperGrok/Build credit pool via GetGrokCreditsConfig; rate headers are short-window only."
     )
     return result
 
@@ -598,9 +838,9 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         "notes": [
             "Tokens/models from cliproxy postgres usage_records (durable), not CPA usage-queue.",
             f"Usage window: last {USAGE_WINDOW_HOURS}h.",
-            "xAI remaining: rate-limit window remaining (RPM/TPM headers) + team_blocked from /v1/me.",
-            "xAI does NOT expose SuperGrok weekly remaining/reset via public API; that still requires console/UI.",
-            "CPA next_retry_after is cooldown after quota/spending-limit error, not billing cycle reset.",
+            "xAI SuperGrok/Build remaining% + reset: grok.com GetGrokCreditsConfig (same source as Grok CLI TUI).",
+            "Secondary: team_blocked from /v1/me; short-window RPM/TPM from chat rate-limit headers.",
+            "CPA next_retry_after is cooldown after quota/spending-limit error, not credit-period reset.",
         ],
     }
 
