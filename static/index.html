@@ -314,6 +314,89 @@ function toggleDetails(id) {
   el.setAttribute('data-expanded', expanded ? 'false' : 'true');
 }
 
+/* ── Z.AI card ── */
+function renderZaiCard(w) {
+  if (!w) return '';
+  const st = classify(w);
+  const sess = w.session || {};
+  const week = w.weekly || {};
+  const mcp = w.mcp || {};
+  const level = w.level || '?';
+  const badge = w.ok
+    ? '<span class="badge ' + (st === 'critical' ? 'bad' : st === 'warn' ? 'warn' : 'ok') + '">plan ' + escapeHtml(level) + '</span>'
+    : '<span class="badge bad">error</span>';
+
+  function limitRow(label, lim, idPrefix) {
+    if (!lim || lim.remaining_percent == null) {
+      return '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val muted">—</span></div></div>';
+    }
+    const rem = lim.remaining_percent;
+    const used = lim.used_percent;
+    const cls = rem <= 0 ? 'bad' : rem <= 40 ? 'warn' : 'ok';
+    const width = Math.max(0, Math.min(100, rem));
+    const resetRel = lim.next_reset_at ? fmtRelative(lim.next_reset_at) : '';
+    const resetLine = lim.next_reset_at
+      ? ('сброс ' + fmtDateShort(lim.next_reset_at) + (resetRel ? ' · ' + resetRel : ''))
+      : '';
+    return '<div class="limit-row">' +
+      '<div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val ' + (cls === 'bad' ? 'bad-text' : cls === 'warn' ? 'warn-text' : '') + '">' + rem + '%</span></div>' +
+      '<div class="bar ' + cls + '"><span style="width:' + width + '%"></span></div>' +
+      (used != null ? '<div class="bar-sub">used ' + used + '%</div>' : '') +
+      (resetLine ? '<div class="bar-sub">' + resetLine + '</div>' : '') +
+    '</div>';
+  }
+
+  const cardId = 'zai-card';
+
+  // Details block
+  const mcpCur = mcp.currentValue != null ? mcp.currentValue : '—';
+  const mcpLim = mcp.usage != null ? mcp.usage : '—';
+  const mcpRem = mcp.remaining != null ? mcp.remaining : '—';
+  const mcpReset = mcp.next_reset_at ? (fmtDateShort(mcp.next_reset_at) + ' · ' + fmtRelative(mcp.next_reset_at)) : '—';
+
+  // exact token values from limits
+  const sessLim = (w.limits || []).find(function(l){ return l.kind === 'session'; }) || {};
+  const weekLim = (w.limits || []).find(function(l){ return l.kind === 'weekly'; }) || {};
+  const mcpLimRaw = (w.limits || []).find(function(l){ return l.kind === 'mcp'; }) || {};
+
+  function exactVal(lim) {
+    const num = lim.number != null ? fmt(lim.number) : '—';
+    const usage = lim.currentValue != null ? fmt(lim.currentValue) : '—';
+    const unit = lim.unit || '';
+    return usage + ' / ' + num + ' ' + escapeHtml(unit);
+  }
+
+  const details =
+    '<div class="details-body">' +
+      '<div class="details-section">MCP инструменты</div>' +
+      '<div class="details-row"><span>использовано</span><span><b>' + escapeHtml(String(mcpCur)) + '</b> / ' + escapeHtml(String(mcpLim)) + '</span></div>' +
+      '<div class="details-row"><span>осталось</span><span>' + escapeHtml(String(mcpRem)) + '</span></div>' +
+      '<div class="details-row"><span>сброс</span><span class="muted">' + mcpReset + '</span></div>' +
+      '<div class="details-section">Точные значения</div>' +
+      '<div class="details-mono">' +
+        'short: ' + exactVal(sessLim) + '<br>' +
+        'week: ' + exactVal(weekLim) + '<br>' +
+        'mcp: ' + exactVal(mcpLimRaw) + '<br>' +
+        (sessLim.summary ? ('summary: ' + escapeHtml(sessLim.summary)) : '') +
+      '</div>' +
+      '<div class="details-src">источник: /api/monitor/usage/quota/limit</div>' +
+      (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '') +
+    '</div>';
+
+  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
+    '<div class="pcard-head"><span class="pcard-title">Z.AI · GLM Coding</span>' + badge + '</div>' +
+    limitRow('короткий (5ч)', sess) +
+    limitRow('недельный', week) +
+    '<div class="bar-sub">MCP ' + escapeHtml(String(mcpCur)) + '/' + escapeHtml(String(mcpLim)) + '</div>' +
+    details +
+    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
+  '</div>';
+}
+
+/* ── Provider card stubs (Tasks 4–5) ── */
+function renderDeepseekCard(w) { return ''; }
+function renderOpenrouterCard(w) { return ''; }
+
 /* ── Stats row ── */
 function renderStats(data) {
   const accounts = (data.accounts || []).filter(function(a) {
@@ -376,7 +459,13 @@ async function load() {
 
   // Renderers filled in by later tasks
   renderStats(data);
-  document.getElementById('providers').innerHTML = '<div class="muted">providers…</div>';
+  const wallets = data.wallets || {};
+  const providerCards = [
+    renderZaiCard(wallets.zai),
+    renderDeepseekCard(wallets.deepseek),
+    renderOpenrouterCard(wallets.openrouter),
+  ].filter(Boolean).join('');
+  document.getElementById('providers').innerHTML = providerCards || '<div class="muted">Нет данных</div>';
   document.getElementById('accounts').innerHTML = '<div class="muted">accounts…</div>';
 }
 load();
