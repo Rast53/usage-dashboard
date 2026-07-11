@@ -239,6 +239,11 @@ function escapeHtml(s) {
   if (s == null) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+function daysUntil(v) {
+  const d = parseDate(v);
+  if (!d) return null;
+  return Math.floor((d.getTime() - Date.now()) / 86400000);
+}
 
 /* ── Classify: returns 'critical' | 'warn' | 'ok' ── */
 function classify(item) {
@@ -251,6 +256,15 @@ function classify(item) {
     }
     const rem = credits.remaining_percent;
     if (rem != null && rem <= 40) return 'warn';
+    // Codex: no credits %, but subscription expiry date available.
+    const until = q.subscription_active_until;
+    if (rem == null && until) {
+      const days = daysUntil(until);
+      if (days != null) {
+        if (days <= 0) return 'critical';
+        if (days <= 7) return 'warn';
+      }
+    }
     return 'ok';
   }
   // Z.AI wallet
@@ -566,6 +580,20 @@ function renderAccountCard(a) {
     const rem = credits.remaining_percent;
     const bCls = rem <= 40 ? 'warn' : 'ok';
     badge = '<span class="badge ' + bCls + '">' + rem + '%</span>';
+  } else if (q.subscription_active_until) {
+    // Codex: show days until subscription expires.
+    const d = daysUntil(q.subscription_active_until);
+    if (d != null) {
+      if (d <= 0) {
+        badge = '<span class="badge bad">истекла</span>';
+      } else if (d <= 7) {
+        badge = '<span class="badge warn">' + d + 'д</span>';
+      } else {
+        badge = '<span class="badge ok">' + d + 'д</span>';
+      }
+    } else {
+      badge = '<span class="badge ok">OK</span>';
+    }
   } else {
     badge = '<span class="badge ok">OK</span>';
   }
@@ -576,6 +604,14 @@ function renderAccountCard(a) {
   let resetLine = '';
   if (isBlocked && reason) {
     resetLine = reason;
+  } else if (q.subscription_active_until) {
+    // Codex: subscription expiry is the relevant "reset" boundary.
+    const d = daysUntil(q.subscription_active_until);
+    if (d != null && d <= 0) {
+      resetLine = 'подписка истекла ' + fmtDateShort(q.subscription_active_until);
+    } else {
+      resetLine = (q.plan_type ? q.plan_type + ' до ' : 'подписка до ') + fmtDateShort(q.subscription_active_until) + (resetRel ? ' · ' + resetRel : '');
+    }
   } else if (resetAt) {
     resetLine = 'сброс ' + fmtDateShort(resetAt) + (resetRel ? ' · ' + resetRel : '');
   }
@@ -627,10 +663,14 @@ function renderAccountCard(a) {
       (modelStatsHtml || '<div class="details-row muted">нет данных</div>') +
       '<div class="details-section">Запросы</div>' +
       sparkline(a.recent_requests) +
-      '<div class="details-section">Квота</div>' +
+      '<div class="details-section">' + (q.subscription_active_until ? 'Подписка' : 'Квота') + '</div>' +
       '<div class="details-mono">' +
-        (credits.remaining_percent != null ? ('credits: ' + credits.remaining_percent + '% осталось') : 'credits: нет данных') + '<br>' +
-        (credits.period_end ? ('period end: ' + fmtDateShort(credits.period_end)) : '') +
+        (q.subscription_active_until
+          ? ('план: ' + escapeHtml(q.plan_type || '?') + '<br>' +
+             'действует до: ' + fmtDateShort(q.subscription_active_until) + (resetRel ? ' (' + resetRel + ')' : '') +
+             (q.subscription_active_start ? ('<br>начало: ' + fmtDateShort(q.subscription_active_start)) : ''))
+          : ((credits.remaining_percent != null ? ('credits: ' + credits.remaining_percent + '% осталось') : 'credits: нет данных') + '<br>' +
+             (credits.period_end ? ('period end: ' + fmtDateShort(credits.period_end)) : ''))) +
         (a.account_type ? ('<br>account type: ' + escapeHtml(a.account_type)) : '') +
         (q.rate && q.rate.remaining_tokens != null ? ('<br>rate: ' + fmt(q.rate.remaining_tokens) + ' / ' + fmt(q.rate.limit_tokens) + ' tok') : '') +
       '</div>' +

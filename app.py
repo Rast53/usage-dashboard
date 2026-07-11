@@ -1365,6 +1365,147 @@ def probe_all_xai(files: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def load_codex_auth_file(path_hint: str | None, email: str | None) -> dict[str, Any] | None:
+    """Load a Codex (ChatGPT) auth file by path or email-based filename."""
+    candidates: list[Path] = []
+    if path_hint:
+        candidates.append(Path(path_hint))
+    if email:
+        candidates.append(CPA_AUTH_DIR / f"codex-{email}.json")
+        candidates.append(CPA_AUTH_DIR / f"codex-{email}-plus.json")
+    for p in candidates:
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except Exception:
+                continue
+    if email:
+        for p in CPA_AUTH_DIR.glob("codex-*.json"):
+            try:
+                d = json.loads(p.read_text())
+                if d.get("email") == email:
+                    return d
+            except Exception:
+                continue
+    return None
+
+
+def probe_codex_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
+    """Extract ChatGPT subscription info from the Codex auth file's id_token (JWT).
+
+    No network calls — the id_token JWT already carries plan_type and
+    subscription_active_until. OpenAI's direct API returns 429 billing_not_active
+    for these OAuth tokens (API billing ≠ ChatGPT subscription), so the JWT
+    is the reliable source.
+    """
+    email = auth_meta.get("email") or auth_meta.get("account") or "unknown"
+    auth = load_codex_auth_file(auth_meta.get("path"), email)
+    result: dict[str, Any] = {
+        "provider": "codex",
+        "email": email,
+        "probed_at": now_iso(),
+        "ok": False,
+        "plan_type": None,
+        "subscription_active_until": None,
+        "subscription_active_start": None,
+        "subscription_last_checked": None,
+        "account_id": None,
+        "team_blocked": None,
+        "blocked_reason": None,
+        "credits": {},
+        "rate": {},
+        "cpa": {
+            "status": auth_meta.get("status"),
+            "unavailable": bool(auth_meta.get("unavailable")),
+            "disabled": bool(auth_meta.get("disabled")),
+            "status_message": auth_meta.get("status_message") or "",
+            "next_retry_after": auth_meta.get("next_retry_after"),
+            "failed": auth_meta.get("failed"),
+            "success": auth_meta.get("success"),
+        },
+        "source": "codex-jwt-probe",
+        "notes": [],
+        "error": None,
+    }
+
+    if not auth:
+        result["error"] = "auth file not found"
+        return result
+
+    result["account_id"] = auth.get("account_id")
+
+    # id_token carries the subscription claims (access_token has fewer).
+    id_token = auth.get("id_token") or ""
+    claims = jwt_claims(id_token) if id_token else {}
+    oai_auth = claims.get("https://api.openai.com/auth") or {}
+
+    if oai_auth:
+        result["plan_type"] = oai_auth.get("chatgpt_plan_type")
+        result["subscription_active_until"] = oai_auth.get("chatgpt_subscription_active_until")
+        result["subscription_active_start"] = oai_auth.get("chatgpt_subscription_active_start")
+        result["subscription_last_checked"] = oai_auth.get("chatgpt_subscription_last_checked")
+        result["ok"] = True
+        result["notes"].append("subscription info from id_token JWT claims")
+    else:
+        # Fallback: access_token claims (may lack subscription fields on Plus).
+        at_claims = jwt_claims(auth.get("access_token") or "")
+        at_auth = at_claims.get("https://api.openai.com/auth") or {}
+        if at_auth:
+            result["plan_type"] = at_auth.get("chatgpt_plan_type")
+            result["account_id"] = result["account_id"] or at_auth.get("chatgpt_account_id")
+            result["ok"] = True
+            result["notes"].append("plan_type from access_token JWT (subscription dates missing)")
+
+    # Determine subscription status from active_until.
+    until = result.get("subscription_active_until")
+    if until:
+        try:
+            until_dt = datetime.fromisoformat(str(until).replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            if until_dt < now:
+                result["team_blocked"] = True
+                result["blocked_reason"] = "subscription expired"
+                result["notes"].append(f"subscription expired: {until}")
+            else:
+                result["remaining_summary"] = f"Plus до {until_dt.strftime('%d.%m.%Y')}"
+                days_left = (until_dt - now).days
+                result["reset_summary"] = until
+                result["reset_at"] = until
+                if days_left <= 3:
+                    result["notes"].append(f"subscription expires in {days_left}d")
+        except Exception as e:
+            result["notes"].append(f"could not parse subscription_active_until: {e}")
+    elif result["plan_type"]:
+        result["remaining_summary"] = result["plan_type"].capitalize()
+
+    if not result.get("remaining_summary"):
+        result["remaining_summary"] = "нет данных подписки"
+
+    return result
+
+
+def probe_all_codex(files: list[dict[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {"updated_at": now_iso(), "accounts": {}}
+    for f in files:
+        if (f.get("provider") or f.get("type")) != "codex":
+            continue
+        email = f.get("email") or f.get("account")
+        if not email:
+            continue
+        try:
+            out["accounts"][email] = probe_codex_account(f)
+        except Exception as e:
+            out["accounts"][email] = {
+                "provider": "codex",
+                "email": email,
+                "probed_at": now_iso(),
+                "ok": False,
+                "error": str(e),
+                "notes": ["probe exception"],
+            }
+    return out
+
+
 def fetch_usage_from_pg(window_hours: int = USAGE_WINDOW_HOURS) -> tuple[dict[str, dict[str, Any]], list[str]]:
     errors: list[str] = []
     by_source: dict[str, dict[str, Any]] = {}
@@ -1483,6 +1624,13 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             # DeepSeek + OpenRouter wallet probes
             try:
                 ds_accounts = dict((_quota_cache or {}).get("accounts") or {})
+                # Codex (ChatGPT) subscription probe — JWT only, no network calls.
+                try:
+                    codex_result = probe_all_codex(files or [])
+                    if codex_result.get("accounts"):
+                        ds_accounts.update(codex_result["accounts"])
+                except Exception as e:
+                    errors.append(f"codex-subscription-probe: {e}")
                 ds_result = probe_deepseek_balance()
                 if ds_result is not None:
                     ds_accounts["deepseek-main"] = ds_result
@@ -1519,7 +1667,7 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         recent = f.get("recent_requests") or []
         recent_success = sum(int(x.get("success") or 0) for x in recent)
         recent_failed = sum(int(x.get("failed") or 0) for x in recent)
-        quota = quota_accounts.get(email) if provider == "xai" else None
+        quota = quota_accounts.get(email) if provider in ("xai", "codex") else None
 
         account = {
             "provider": provider,
@@ -1548,7 +1696,9 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             "model_stats": list(tok.get("model_stats") or []),
             "window_hours": USAGE_WINDOW_HOURS,
             "quota": quota,
-            "source": "cpa+pg+xai-probe" if provider == "xai" else "cpa+pg",
+            "source": ("cpa+pg+xai-probe" if provider == "xai"
+                        else "cpa+pg+codex-jwt" if provider == "codex"
+                        else "cpa+pg"),
         }
         accounts.append(account)
 
