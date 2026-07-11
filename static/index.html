@@ -628,7 +628,7 @@ function renderAccountCard(a) {
 
   return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
     '<div class="pcard-head"><span class="pcard-title">' + escapeHtml(title) + '</span>' + badge + '</div>' +
-    '<div class="' + statusCls + '" style="font-size:13px;margin-bottom:4px">' + statusText + (resetLine ? ' · ' + escapeHtml(resetLine) : '') + '</div>' +
+    '<div class="' + statusCls + '" style="font-size:13px;margin-bottom:4px">' + escapeHtml(statusText) + (resetLine ? ' · ' + escapeHtml(resetLine) : '') + '</div>' +
     progressBar +
     '<div class="bar-sub">' + fmt(a.success) + ' req ok · ' + fmt(a.failed) + ' fail' + '</div>' +
     (sub ? '<div class="bar-sub">' + escapeHtml(sub) + '</div>' : '') +
@@ -649,13 +649,16 @@ function renderStats(data) {
   if (wallets.deepseek) allItems.push(wallets.deepseek);
   if (wallets.openrouter) allItems.push(wallets.openrouter);
 
-  let active = 0, attention = 0, blocked = 0, tokens = 0;
+  let active = 0, attention = 0, blocked = 0;
   allItems.forEach(function(item) {
     const st = classify(item);
     if (st === 'ok') active++;
     else if (st === 'warn') attention++;
     else if (st === 'critical') { attention++; blocked++; }
-    if (item.tokens_total) tokens += item.tokens_total;
+  });
+  let tokens = 0;
+  accounts.forEach(function(a) {
+    if (a.tokens_total) tokens += a.tokens_total;
   });
 
   // Spend 24h: DeepSeek + OpenRouter
@@ -687,31 +690,37 @@ async function refresh() {
   await load();
 }
 async function load() {
-  const res = await fetch('/api/summary');
-  const data = await res.json();
+  try {
+    const res = await fetch('/api/summary');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
 
-  document.getElementById('updated').textContent =
-    'обновлено: ' + fmtDateTime(data.updated_at);
+    document.getElementById('updated').textContent =
+      'обновлено: ' + fmtDateTime(data.updated_at) + ' · авто 30с';
 
-  const errs = data.errors || [];
-  document.getElementById('errors').innerHTML = errs.map(function(e) {
-    return '<div class="err">' + escapeHtml(e) + '</div>';
-  }).join('');
+    const errs = data.errors || [];
+    document.getElementById('errors').innerHTML = errs.map(function(e) {
+      return '<div class="err">' + escapeHtml(e) + '</div>';
+    }).join('');
 
-  // Renderers filled in by later tasks
-  renderStats(data);
-  const wallets = data.wallets || {};
-  const providerCards = [
-    renderZaiCard(wallets.zai),
-    renderDeepseekCard(wallets.deepseek),
-    renderOpenrouterCard(wallets.openrouter),
-  ].filter(Boolean).join('');
-  document.getElementById('providers').innerHTML = providerCards || '<div class="muted">Нет данных</div>';
-  const cpaAccounts = (data.accounts || []).filter(function(a) {
-    return a.provider !== 'deepseek' && a.provider !== 'openrouter' && a.provider !== 'zai'
-      && a.email !== 'deepseek-main' && a.email !== 'openrouter-main' && a.email !== 'zai-main';
-  });
-  document.getElementById('accounts').innerHTML = cpaAccounts.map(renderAccountCard).join('') || '<div class="muted">Нет аккаунтов</div>';
+    renderStats(data);
+
+    const wallets = data.wallets || {};
+    const providerCards = [
+      renderZaiCard(wallets.zai),
+      renderDeepseekCard(wallets.deepseek),
+      renderOpenrouterCard(wallets.openrouter),
+    ].filter(Boolean).join('');
+    document.getElementById('providers').innerHTML = providerCards || '<div class="muted">Нет данных</div>';
+
+    const cpaAccounts = (data.accounts || []).filter(function(a) {
+      return a.provider !== 'deepseek' && a.provider !== 'openrouter' && a.provider !== 'zai'
+        && a.email !== 'deepseek-main' && a.email !== 'openrouter-main' && a.email !== 'zai-main';
+    });
+    document.getElementById('accounts').innerHTML = cpaAccounts.map(renderAccountCard).join('') || '<div class="muted">Нет аккаунтов</div>';
+  } catch(e) {
+    document.getElementById('errors').innerHTML = '<div class="err">Ошибка загрузки: ' + escapeHtml(e.message) + '</div>';
+  }
 }
 load();
 setInterval(load, 30000);
