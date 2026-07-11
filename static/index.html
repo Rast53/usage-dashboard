@@ -407,7 +407,18 @@ function renderDeepseekCard(w) {
   const badge = w.ok ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERR</span>';
 
   const spend = w.spend_24h || {};
-  const spent = spend.spent != null ? ('¥' + money(spend.spent)) : (spend.spent_summary || '—');
+  // spend.spent can be a number (OpenRouter) or an object {CNY, USD} (DeepSeek)
+  let spent;
+  if (spend.spent != null) {
+    if (typeof spend.spent === 'object') {
+      const cnySpent = spend.spent.CNY != null ? Number(spend.spent.CNY) : null;
+      spent = cnySpent != null ? ('¥' + money(Math.abs(cnySpent))) : (spend.spent_summary || '—');
+    } else {
+      spent = '¥' + money(spend.spent);
+    }
+  } else {
+    spent = spend.spent_summary || '—';
+  }
   const baseAt = spend.baseline_at ? ('база ' + fmtDateShort(spend.baseline_at)) : '';
 
   const cardId = 'deepseek-card';
@@ -673,7 +684,10 @@ function renderStats(data) {
   let spendParts = [];
   const ds = wallets.deepseek || {};
   const dsSpend = ds.spend_24h || {};
-  if (dsSpend.spent != null) spendParts.push('¥' + money(dsSpend.spent));
+  if (dsSpend.spent != null) {
+    const dsVal = typeof dsSpend.spent === 'object' ? (dsSpend.spent.CNY != null ? Number(dsSpend.spent.CNY) : null) : Number(dsSpend.spent);
+    if (dsVal != null) spendParts.push('¥' + money(Math.abs(dsVal)));
+  }
   const or = wallets.openrouter || {};
   const orSpend = or.spend_24h || {};
   if (orSpend.spent != null) spendParts.push('$' + money(orSpend.spent));
