@@ -256,13 +256,18 @@ function classify(item) {
     }
     const rem = credits.remaining_percent;
     if (rem != null && rem <= 40) return 'warn';
-    // Codex: no credits %, but subscription expiry date available.
-    const until = q.subscription_active_until;
-    if (rem == null && until) {
-      const days = daysUntil(until);
-      if (days != null) {
-        if (days <= 0) return 'critical';
-        if (days <= 7) return 'warn';
+    // Codex: no credits %, but subscription/grace-period dates available.
+    if (rem == null) {
+      // Grace period is the hard deadline for delinquent accounts.
+      const grace = q.grace_period_end;
+      const until = q.subscription_active_until;
+      const deadline = grace || until;
+      if (deadline) {
+        const days = daysUntil(deadline);
+        if (days != null) {
+          if (days <= 0) return 'critical';
+          if (q.is_delinquent || days <= 5) return 'warn';
+        }
       }
     }
     return 'ok';
@@ -553,6 +558,9 @@ function renderAccountCard(a) {
   } else if (a.unavailable) {
     statusText = 'недоступен';
     statusCls = 'bad-text';
+  } else if (q.is_delinquent) {
+    statusText = 'просрочка';
+    statusCls = 'warn-text';
   } else if (a.status === 'active') {
     statusText = 'активен';
     statusCls = 'ok-text';
@@ -580,13 +588,14 @@ function renderAccountCard(a) {
     const rem = credits.remaining_percent;
     const bCls = rem <= 40 ? 'warn' : 'ok';
     badge = '<span class="badge ' + bCls + '">' + rem + '%</span>';
-  } else if (q.subscription_active_until) {
-    // Codex: show days until subscription expires.
-    const d = daysUntil(q.subscription_active_until);
+  } else if (q.subscription_active_until || q.grace_period_end) {
+    // Codex: show days until deadline (grace period for delinquent, else subscription end).
+    const deadline = q.grace_period_end || q.subscription_active_until;
+    const d = daysUntil(deadline);
     if (d != null) {
       if (d <= 0) {
         badge = '<span class="badge bad">истекла</span>';
-      } else if (d <= 7) {
+      } else if (q.is_delinquent || d <= 7) {
         badge = '<span class="badge warn">' + d + 'д</span>';
       } else {
         badge = '<span class="badge ok">' + d + 'д</span>';
@@ -598,12 +607,20 @@ function renderAccountCard(a) {
     badge = '<span class="badge ok">OK</span>';
   }
 
-  // Reset info
+  // Reset info — prefer the backend-provided summary (already human-readable).
   const resetAt = q.reset_summary || credits.period_end || a.next_retry_after;
   const resetRel = resetAt ? fmtRelative(resetAt) : '';
   let resetLine = '';
   if (isBlocked && reason) {
     resetLine = reason;
+  } else if (q.grace_period_end) {
+    // Codex delinquent: grace period is the hard deadline.
+    const d = daysUntil(q.grace_period_end);
+    if (d != null && d <= 0) {
+      resetLine = 'грейс истёк ' + fmtDateShort(q.grace_period_end);
+    } else {
+      resetLine = 'грейс до ' + fmtDateShort(q.grace_period_end) + (resetRel ? ' · ' + resetRel : '');
+    }
   } else if (q.subscription_active_until) {
     // Codex: subscription expiry is the relevant "reset" boundary.
     const d = daysUntil(q.subscription_active_until);
@@ -663,12 +680,16 @@ function renderAccountCard(a) {
       (modelStatsHtml || '<div class="details-row muted">нет данных</div>') +
       '<div class="details-section">Запросы</div>' +
       sparkline(a.recent_requests) +
-      '<div class="details-section">' + (q.subscription_active_until ? 'Подписка' : 'Квота') + '</div>' +
+      '<div class="details-section">' + (q.subscription_active_until || q.grace_period_end ? 'Подписка' : 'Квота') + '</div>' +
       '<div class="details-mono">' +
-        (q.subscription_active_until
-          ? ('план: ' + escapeHtml(q.plan_type || '?') + '<br>' +
+        (q.subscription_active_until || q.grace_period_end
+          ? ('план: ' + escapeHtml(q.plan_type || '?') + (q.subscription_plan ? ' (' + escapeHtml(q.subscription_plan) + ')' : '') + '<br>' +
              'действует до: ' + fmtDateShort(q.subscription_active_until) + (resetRel ? ' (' + resetRel + ')' : '') +
-             (q.subscription_active_start ? ('<br>начало: ' + fmtDateShort(q.subscription_active_start)) : ''))
+             (q.subscription_active_start ? ('<br>начало: ' + fmtDateShort(q.subscription_active_start)) : '') +
+             (q.renews_at ? ('<br>продление: ' + fmtDateShort(q.renews_at)) : '') +
+             (q.is_delinquent ? ('<br><span class="warn-text">просрочка платежа</span>') : '') +
+             (q.grace_period_end ? ('<br>грейс до: ' + fmtDateShort(q.grace_period_end)) : '') +
+             (q.billing_period ? ('<br>биллинг: ' + escapeHtml(q.billing_period) + (q.billing_currency ? ' ' + escapeHtml(q.billing_currency) : '')) : ''))
           : ((credits.remaining_percent != null ? ('credits: ' + credits.remaining_percent + '% осталось') : 'credits: нет данных') + '<br>' +
              (credits.period_end ? ('period end: ' + fmtDateShort(credits.period_end)) : ''))) +
         (a.account_type ? ('<br>account type: ' + escapeHtml(a.account_type)) : '') +

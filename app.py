@@ -1391,12 +1391,19 @@ def load_codex_auth_file(path_hint: str | None, email: str | None) -> dict[str, 
 
 
 def probe_codex_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
-    """Extract ChatGPT subscription info from the Codex auth file's id_token (JWT).
+    """Fetch ChatGPT subscription status via backend API + JWT fallback.
 
-    No network calls — the id_token JWT already carries plan_type and
-    subscription_active_until. OpenAI's direct API returns 429 billing_not_active
-    for these OAuth tokens (API billing ≠ ChatGPT subscription), so the JWT
-    is the reliable source.
+    Primary: GET https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27
+    — works with the OAuth Bearer token (no Cloudflare challenge), returns
+    full entitlement: plan, exact expires_at/renews_at, is_delinquent,
+    grace_period_end_timestamp.
+
+    Fallback: id_token JWT claims (plan_type, subscription dates) when the
+    API call fails.
+
+    Note: per-model rate limits (5h / weekly) live on /backend-api/rate_limits
+    which sits behind a Cloudflare browser challenge — not accessible with a
+    Bearer token alone.
     """
     email = auth_meta.get("email") or auth_meta.get("account") or "unknown"
     auth = load_codex_auth_file(auth_meta.get("path"), email)
@@ -1408,7 +1415,13 @@ def probe_codex_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
         "plan_type": None,
         "subscription_active_until": None,
         "subscription_active_start": None,
-        "subscription_last_checked": None,
+        "subscription_plan": None,
+        "has_active_subscription": None,
+        "is_delinquent": None,
+        "grace_period_end": None,
+        "billing_period": None,
+        "billing_currency": None,
+        "renews_at": None,
         "account_id": None,
         "team_blocked": None,
         "blocked_reason": None,
@@ -1433,49 +1446,118 @@ def probe_codex_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
         return result
 
     result["account_id"] = auth.get("account_id")
+    token = auth.get("access_token") or ""
 
-    # id_token carries the subscription claims (access_token has fewer).
+    # JWT fallback data (always available, no network).
     id_token = auth.get("id_token") or ""
     claims = jwt_claims(id_token) if id_token else {}
     oai_auth = claims.get("https://api.openai.com/auth") or {}
+    jwt_plan = oai_auth.get("chatgpt_plan_type")
+    jwt_until = oai_auth.get("chatgpt_subscription_active_until")
 
-    if oai_auth:
-        result["plan_type"] = oai_auth.get("chatgpt_plan_type")
-        result["subscription_active_until"] = oai_auth.get("chatgpt_subscription_active_until")
-        result["subscription_active_start"] = oai_auth.get("chatgpt_subscription_active_start")
-        result["subscription_last_checked"] = oai_auth.get("chatgpt_subscription_last_checked")
-        result["ok"] = True
-        result["notes"].append("subscription info from id_token JWT claims")
-    else:
-        # Fallback: access_token claims (may lack subscription fields on Plus).
-        at_claims = jwt_claims(auth.get("access_token") or "")
-        at_auth = at_claims.get("https://api.openai.com/auth") or {}
-        if at_auth:
-            result["plan_type"] = at_auth.get("chatgpt_plan_type")
-            result["account_id"] = result["account_id"] or at_auth.get("chatgpt_account_id")
-            result["ok"] = True
-            result["notes"].append("plan_type from access_token JWT (subscription dates missing)")
-
-    # Determine subscription status from active_until.
-    until = result.get("subscription_active_until")
-    if until:
-        try:
-            until_dt = datetime.fromisoformat(str(until).replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            if until_dt < now:
-                result["team_blocked"] = True
-                result["blocked_reason"] = "subscription expired"
-                result["notes"].append(f"subscription expired: {until}")
+    # Primary: accounts/check API.
+    api_ok = False
+    if token:
+        st, _, raw, err = http_request(
+            "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27",
+            token=token,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "codex_cli_rs/0.1.0",
+                "originator": "codex_cli_rs",
+            },
+            timeout=15,
+        )
+        data = None
+        if raw:
+            try:
+                data = json.loads(raw.decode("utf-8", errors="replace"))
+            except Exception:
+                data = None
+        if st == 200 and isinstance(data, dict):
+            accounts_map = data.get("accounts") or {}
+            # Prefer the account_id-keyed entry, fall back to "default".
+            acc_key = result["account_id"] if result["account_id"] in accounts_map else "default"
+            acc_data = accounts_map.get(acc_key) or {}
+            ent = acc_data.get("entitlement") or {}
+            acc_info = acc_data.get("account") or {}
+            if ent or acc_info:
+                api_ok = True
+                result["source"] = "codex-backend-accounts-check"
+                result["ok"] = True
+                result["plan_type"] = acc_info.get("plan_type") or jwt_plan
+                result["subscription_plan"] = ent.get("subscription_plan")
+                result["has_active_subscription"] = ent.get("has_active_subscription")
+                result["is_delinquent"] = ent.get("is_delinquent")
+                result["grace_period_end"] = ent.get("grace_period_end_timestamp")
+                result["billing_period"] = ent.get("billing_period")
+                result["billing_currency"] = ent.get("billing_currency")
+                result["renews_at"] = ent.get("renews_at")
+                # expires_at from entitlement is the authoritative end date.
+                result["subscription_active_until"] = ent.get("expires_at") or jwt_until
+                result["subscription_active_start"] = oai_auth.get("chatgpt_subscription_active_start")
+                result["notes"].append("subscription data from backend-api/accounts/check")
             else:
-                result["remaining_summary"] = f"Plus до {until_dt.strftime('%d.%m.%Y')}"
-                days_left = (until_dt - now).days
-                result["reset_summary"] = until
-                result["reset_at"] = until
-                if days_left <= 3:
-                    result["notes"].append(f"subscription expires in {days_left}d")
-        except Exception as e:
-            result["notes"].append(f"could not parse subscription_active_until: {e}")
-    elif result["plan_type"]:
+                result["notes"].append(f"accounts/check 200 but no entitlement: {str(data)[:120]}")
+        else:
+            result["notes"].append(f"accounts/check failed: {st} {err or ''}".strip())
+
+    # Fallback: JWT claims only.
+    if not api_ok:
+        if oai_auth:
+            result["ok"] = True
+            result["plan_type"] = jwt_plan
+            result["subscription_active_until"] = jwt_until
+            result["subscription_active_start"] = oai_auth.get("chatgpt_subscription_active_start")
+            result["source"] = "codex-jwt-fallback"
+            result["notes"].append("subscription info from id_token JWT (API failed)")
+        else:
+            at_claims = jwt_claims(token)
+            at_auth = at_claims.get("https://api.openai.com/auth") or {}
+            if at_auth:
+                result["plan_type"] = at_auth.get("chatgpt_plan_type")
+                result["account_id"] = result["account_id"] or at_auth.get("chatgpt_account_id")
+                result["ok"] = True
+                result["source"] = "codex-jwt-fallback"
+                result["notes"].append("plan_type from access_token JWT")
+
+    # Determine status flags from subscription data.
+    until = result.get("subscription_active_until")
+    grace = result.get("grace_period_end")
+    delinquent = result.get("is_delinquent")
+    now = datetime.now(timezone.utc)
+
+    # Grace period expiry is the hard deadline when account stops working.
+    deadline = None
+    if grace:
+        try:
+            deadline = datetime.fromisoformat(str(grace).replace("Z", "+00:00"))
+        except Exception:
+            deadline = None
+    if deadline is None and until:
+        try:
+            deadline = datetime.fromisoformat(str(until).replace("Z", "+00:00"))
+        except Exception:
+            deadline = None
+
+    if deadline:
+        days_left = (deadline - now).days
+        result["reset_summary"] = deadline.isoformat()
+        result["reset_at"] = deadline.isoformat()
+        if deadline < now:
+            result["team_blocked"] = True
+            result["blocked_reason"] = "subscription/grace period expired"
+            result["remaining_summary"] = "подписка истекла"
+        else:
+            plan_label = (result.get("plan_type") or "Plus").capitalize()
+            if delinquent:
+                result["remaining_summary"] = f"{plan_label} · просрочка, грейс до {deadline.strftime('%d.%m')}"
+                result["notes"].append(f"delinquent, grace period ends {grace}")
+                if days_left <= 5:
+                    result["notes"].append(f"grace period ends in {days_left}d")
+            else:
+                result["remaining_summary"] = f"{plan_label} до {deadline.strftime('%d.%m.%Y')}"
+    elif result.get("plan_type"):
         result["remaining_summary"] = result["plan_type"].capitalize()
 
     if not result.get("remaining_summary"):
@@ -1697,7 +1779,7 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             "window_hours": USAGE_WINDOW_HOURS,
             "quota": quota,
             "source": ("cpa+pg+xai-probe" if provider == "xai"
-                        else "cpa+pg+codex-jwt" if provider == "codex"
+                        else "cpa+pg+codex-api" if provider == "codex"
                         else "cpa+pg"),
         }
         accounts.append(account)
