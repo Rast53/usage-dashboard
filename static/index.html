@@ -510,6 +510,134 @@ function renderOpenrouterCard(w) {
   '</div>';
 }
 
+/* ── CPA account card ── */
+function renderAccountCard(a) {
+  const st = classify(a);
+  const q = a.quota || {};
+  const credits = q.credits || {};
+  const isBlocked = a.unavailable || q.team_blocked || (credits.used_percent != null && credits.used_percent >= 100);
+
+  // Status text
+  let statusText, statusCls;
+  if (isBlocked) {
+    statusText = 'заблокирован';
+    statusCls = 'bad-text';
+  } else if (a.disabled) {
+    statusText = 'отключён';
+    statusCls = 'muted';
+  } else if (a.unavailable) {
+    statusText = 'недоступен';
+    statusCls = 'bad-text';
+  } else if (a.status === 'active') {
+    statusText = 'активен';
+    statusCls = 'ok-text';
+  } else {
+    statusText = a.status || '?';
+    statusCls = 'muted';
+  }
+
+  // Blocked reason
+  function humanReason(q) {
+    const raw = String(q.blocked_reason || '').toLowerCase();
+    if (!raw) return '';
+    if (raw.includes('credit pool exhausted') || raw.includes('100%')) return 'пул кредитов исчерпан';
+    if (raw.includes('spending-limit') || raw.includes('run out of credits')) return 'лимит трат / кредиты кончились';
+    if (raw.includes('team_blocked')) return 'team blocked';
+    return '';
+  }
+  const reason = humanReason(q);
+
+  // Percentage badge
+  let badge;
+  if (isBlocked) {
+    badge = '<span class="badge bad">0%</span>';
+  } else if (credits.remaining_percent != null) {
+    const rem = credits.remaining_percent;
+    const bCls = rem <= 40 ? 'warn' : 'ok';
+    badge = '<span class="badge ' + bCls + '">' + rem + '%</span>';
+  } else {
+    badge = '<span class="badge ok">OK</span>';
+  }
+
+  // Reset info
+  const resetAt = q.reset_summary || credits.period_end || a.next_retry_after;
+  const resetRel = resetAt ? fmtRelative(resetAt) : '';
+  let resetLine = '';
+  if (isBlocked && reason) {
+    resetLine = reason;
+  } else if (resetAt) {
+    resetLine = 'сброс ' + fmtDateShort(resetAt) + (resetRel ? ' · ' + resetRel : '');
+  }
+
+  // Progress bar
+  let progressBar = '';
+  if (credits.remaining_percent != null) {
+    const rem = credits.remaining_percent;
+    const cls = rem <= 0 ? 'bad' : rem <= 40 ? 'warn' : 'ok';
+    const width = Math.max(0, Math.min(100, rem));
+    progressBar = '<div class="bar ' + cls + '"><span style="width:' + width + '%"></span></div>';
+  }
+
+  // Title: email or name
+  const title = a.email || a.name || a.account_type || 'unknown';
+  const sub = [a.account_type || '', a.last_seen ? ('last ' + fmtDateShort(a.last_seen)) : ''].filter(Boolean).join(' · ');
+
+  // Models (chips, first 4)
+  let modelsHtml = '<span class="muted">—</span>';
+  if ((a.models || []).length) {
+    modelsHtml = (a.models || []).slice(0, 4).map(function(m) {
+      const ms = (a.model_stats || []).find(function(x){ return x.model === m; });
+      const chipTitle = ms ? (m + ': ' + ms.requests + ' req, ' + fmt(ms.tokens_total) + ' tok') : m;
+      return '<span class="model-chip" title="' + escapeHtml(chipTitle) + '">' + escapeHtml(m) + '</span>';
+    }).join('');
+  }
+
+  const cardId = 'acct-' + (a.email || a.name || Math.random().toString(36).slice(2)).replace(/[^a-zA-Z0-9]/g, '_');
+
+  // Details
+  const tokIn = a.tokens_in || 0;
+  const tokOut = a.tokens_out || 0;
+  const tokTotal = a.tokens_total || 0;
+
+  let modelStatsHtml = '';
+  (a.model_stats || []).slice(0, 8).forEach(function(ms) {
+    modelStatsHtml += '<div class="details-row"><span>' + escapeHtml(ms.model || '?') + '</span><span class="muted">' + (ms.requests || 0) + ' req · ' + fmt(ms.tokens_total) + ' tok</span></div>';
+  });
+
+  const details =
+    '<div class="details-body">' +
+      '<div class="details-section">Токены 24ч</div>' +
+      '<div class="details-row"><span>входящие</span><span><b>' + fmt(tokIn) + '</b></span></div>' +
+      '<div class="details-row"><span>исходящие</span><span><b>' + fmt(tokOut) + '</b></span></div>' +
+      '<div class="details-row"><span>всего</span><span><b>' + fmt(tokTotal) + '</b></span></div>' +
+      (a.reasoning_tokens ? '<div class="details-row"><span>reasoning</span><span class="muted">' + fmt(a.reasoning_tokens) + '</span></div>' : '') +
+      (a.cached_tokens ? '<div class="details-row"><span>cached</span><span class="muted">' + fmt(a.cached_tokens) + '</span></div>' : '') +
+      '<div class="details-section">Модели</div>' +
+      (modelStatsHtml || '<div class="details-row muted">нет данных</div>') +
+      '<div class="details-section">Запросы</div>' +
+      sparkline(a.recent_requests) +
+      '<div class="details-section">Квота</div>' +
+      '<div class="details-mono">' +
+        (credits.remaining_percent != null ? ('credits: ' + credits.remaining_percent + '% осталось') : 'credits: нет данных') + '<br>' +
+        (credits.period_end ? ('period end: ' + fmtDateShort(credits.period_end)) : '') +
+        (a.account_type ? ('<br>account type: ' + escapeHtml(a.account_type)) : '') +
+        (q.rate && q.rate.remaining_tokens != null ? ('<br>rate: ' + fmt(q.rate.remaining_tokens) + ' / ' + fmt(q.rate.limit_tokens) + ' tok') : '') +
+      '</div>' +
+      '<div class="details-src">источник: ' + escapeHtml(a.source || 'cpa+pg') + '</div>' +
+    '</div>';
+
+  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
+    '<div class="pcard-head"><span class="pcard-title">' + escapeHtml(title) + '</span>' + badge + '</div>' +
+    '<div class="' + statusCls + '" style="font-size:13px;margin-bottom:4px">' + statusText + (resetLine ? ' · ' + escapeHtml(resetLine) : '') + '</div>' +
+    progressBar +
+    '<div class="bar-sub">' + fmt(a.success) + ' req ok · ' + fmt(a.failed) + ' fail' + '</div>' +
+    (sub ? '<div class="bar-sub">' + escapeHtml(sub) + '</div>' : '') +
+    '<div style="margin-top:6px">' + modelsHtml + '</div>' +
+    details +
+    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
+  '</div>';
+}
+
 /* ── Stats row ── */
 function renderStats(data) {
   const accounts = (data.accounts || []).filter(function(a) {
@@ -579,7 +707,11 @@ async function load() {
     renderOpenrouterCard(wallets.openrouter),
   ].filter(Boolean).join('');
   document.getElementById('providers').innerHTML = providerCards || '<div class="muted">Нет данных</div>';
-  document.getElementById('accounts').innerHTML = '<div class="muted">accounts…</div>';
+  const cpaAccounts = (data.accounts || []).filter(function(a) {
+    return a.provider !== 'deepseek' && a.provider !== 'openrouter' && a.provider !== 'zai'
+      && a.email !== 'deepseek-main' && a.email !== 'openrouter-main' && a.email !== 'zai-main';
+  });
+  document.getElementById('accounts').innerHTML = cpaAccounts.map(renderAccountCard).join('') || '<div class="muted">Нет аккаунтов</div>';
 }
 load();
 setInterval(load, 30000);
