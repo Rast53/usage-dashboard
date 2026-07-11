@@ -654,7 +654,15 @@ function renderStats(data) {
     const st = classify(item);
     if (st === 'ok') active++;
     else if (st === 'warn') attention++;
-    else if (st === 'critical') { attention++; blocked++; }
+    else if (st === 'critical') {
+      attention++;
+      // Only count as "blocked" for CPA accounts (not wallets)
+      var q = item.quota || {};
+      var credits = q.credits || {};
+      if (item.unavailable || q.team_blocked || (credits.used_percent != null && credits.used_percent >= 100)) {
+        blocked++;
+      }
+    }
   });
   let tokens = 0;
   accounts.forEach(function(a) {
@@ -689,6 +697,15 @@ async function refresh() {
   try { await fetch('/api/refresh', { method: 'POST' }); } catch(e) {}
   await load();
 }
+function getExpandedIds() {
+  return new Set(Array.from(document.querySelectorAll('.pcard[data-expanded="true"]')).map(function(el) { return el.id; }));
+}
+function applyExpandedIds(idSet) {
+  idSet.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.setAttribute('data-expanded', 'true');
+  });
+}
 async function load() {
   try {
     const res = await fetch('/api/summary');
@@ -706,6 +723,7 @@ async function load() {
     renderStats(data);
 
     const wallets = data.wallets || {};
+    var expanded = getExpandedIds();
     const providerCards = [
       renderZaiCard(wallets.zai),
       renderDeepseekCard(wallets.deepseek),
@@ -718,6 +736,7 @@ async function load() {
         && a.email !== 'deepseek-main' && a.email !== 'openrouter-main' && a.email !== 'zai-main';
     });
     document.getElementById('accounts').innerHTML = cpaAccounts.map(renderAccountCard).join('') || '<div class="muted">Нет аккаунтов</div>';
+    applyExpandedIds(expanded);
   } catch(e) {
     document.getElementById('errors').innerHTML = '<div class="err">Ошибка загрузки: ' + escapeHtml(e.message) + '</div>';
   }
