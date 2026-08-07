@@ -1,0 +1,24 @@
+# Dockhand autodeploy on aeza-helsinki via hawser edge agent.
+# network_mode: host — CPA mgmt (127.0.0.1:8317), pg (172.19.0.x), Caddy -> 127.0.0.1:3210 unchanged.
+# Secrets + ${VARS} come from dockhand stack_environment_variables (DEEPSEEK_API_KEY добавляется через UI).
+services:
+  usage-dashboard:
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - /opt/usage-dashboard/data:/opt/usage-dashboard/data
+      - /root/.cli-proxy-api:/root/.cli-proxy-api:ro
+    environment:
+      - CPA_BASE=${CPA_BASE:-http://127.0.0.1:8317}
+      - CPA_MGMT_TOKEN=${CPA_MGMT_TOKEN}
+      - USAGE_PORT=${USAGE_PORT:-3210}
+      - USAGE_POLL_SECONDS=${USAGE_POLL_SECONDS:-60}
+      - USAGE_WINDOW_HOURS=${USAGE_WINDOW_HOURS:-24}
+      - USAGE_QUOTA_PROBE_SECONDS=${USAGE_QUOTA_PROBE_SECONDS:-300}
+      - USAGE_DATA_DIR=${USAGE_DATA_DIR:-/opt/usage-dashboard/data}
+      - USAGE_PG_DSN=${USAGE_PG_DSN}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MANAGEMENT_KEY=${OPENROUTER_MANAGEMENT_KEY}
+      - ZAI_API_KEY=${ZAI_API_KEY}

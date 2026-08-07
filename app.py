@@ -30,9 +30,14 @@ CPA_MGMT_TOKEN = os.environ.get("CPA_MGMT_TOKEN", "openclaw")
 CPA_AUTH_DIR = Path(os.environ.get("CPA_AUTH_DIR", "/root/.cli-proxy-api"))
 PG_DSN = os.environ.get(
     "USAGE_PG_DSN",
-    "host=172.19.0.2 port=5432 dbname=cliproxyapi user=cliproxyapi password=CHANGE_ME_POSTGRES_PASSWORD",
+    "host=172.19.0.3 port=5432 dbname=cliproxyapi user=cliproxyapi password=CHANGE_ME_POSTGRES_PASSWORD",
 )
 USAGE_WINDOW_HOURS = int(os.environ.get("USAGE_WINDOW_HOURS", "24"))
+# Orphan PG usage rows (seen in usage_records, no CPA auth-file) are historical noise
+# after account rotation. Default: hide from main accounts list.
+INCLUDE_ORPHAN_USAGE = os.environ.get("USAGE_INCLUDE_ORPHAN_USAGE", "0").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 DATA_DIR = Path(os.environ.get("USAGE_DATA_DIR", "/opt/usage-dashboard/data"))
 STATIC_DIR = Path(os.environ.get("USAGE_STATIC_DIR", "/opt/usage-dashboard/static"))
 SNAPSHOT_PATH = DATA_DIR / "snapshots.jsonl"
@@ -1234,8 +1239,16 @@ def probe_xai_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
             result["remaining_summary"] = f"{rem:g}% left · used {used:g}% (SuperGrok/Build pool)"
         elif rem is not None:
             result["remaining_summary"] = f"{rem:g}% left (SuperGrok/Build pool)"
+        elif used is not None:
+            result["remaining_summary"] = f"used {used:g}% (remaining not provided)"
         else:
-            result["remaining_summary"] = "credits ok (percent missing)"
+            # Some SuperGrok/Build accounts return period timestamps without percent fields.
+            # Treat as live billing window with unknown remaining rather than empty UI.
+            result["remaining_summary"] = "billing period active · % not provided by xAI"
+            result["notes"].append(
+                "GetGrokCreditsConfig returned period window without used/remaining percent "
+                f"(raw_len={credits.get('raw_len')})"
+            )
         if credits.get("period_end"):
             result["reset_summary"] = credits["period_end"]
             result["reset_at"] = credits["period_end"]
@@ -1365,6 +1378,229 @@ def probe_all_xai(files: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def load_codex_auth_file(path_hint: str | None, email: str | None) -> dict[str, Any] | None:
+    """Load a Codex (ChatGPT) auth file by path or email-based filename."""
+    candidates: list[Path] = []
+    if path_hint:
+        candidates.append(Path(path_hint))
+    if email:
+        candidates.append(CPA_AUTH_DIR / f"codex-{email}.json")
+        candidates.append(CPA_AUTH_DIR / f"codex-{email}-plus.json")
+    for p in candidates:
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except Exception:
+                continue
+    if email:
+        for p in CPA_AUTH_DIR.glob("codex-*.json"):
+            try:
+                d = json.loads(p.read_text())
+                if d.get("email") == email:
+                    return d
+            except Exception:
+                continue
+    return None
+
+
+def probe_codex_account(auth_meta: dict[str, Any]) -> dict[str, Any]:
+    """Fetch ChatGPT subscription status via backend API + JWT fallback.
+
+    Primary: GET https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27
+    — works with the OAuth Bearer token (no Cloudflare challenge), returns
+    full entitlement: plan, exact expires_at/renews_at, is_delinquent,
+    grace_period_end_timestamp.
+
+    Fallback: id_token JWT claims (plan_type, subscription dates) when the
+    API call fails.
+
+    Note: per-model rate limits (5h / weekly) live on /backend-api/rate_limits
+    which sits behind a Cloudflare browser challenge — not accessible with a
+    Bearer token alone.
+    """
+    email = auth_meta.get("email") or auth_meta.get("account") or "unknown"
+    auth = load_codex_auth_file(auth_meta.get("path"), email)
+    result: dict[str, Any] = {
+        "provider": "codex",
+        "email": email,
+        "probed_at": now_iso(),
+        "ok": False,
+        "plan_type": None,
+        "subscription_active_until": None,
+        "subscription_active_start": None,
+        "subscription_plan": None,
+        "has_active_subscription": None,
+        "is_delinquent": None,
+        "grace_period_end": None,
+        "billing_period": None,
+        "billing_currency": None,
+        "renews_at": None,
+        "account_id": None,
+        "team_blocked": None,
+        "blocked_reason": None,
+        "credits": {},
+        "rate": {},
+        "cpa": {
+            "status": auth_meta.get("status"),
+            "unavailable": bool(auth_meta.get("unavailable")),
+            "disabled": bool(auth_meta.get("disabled")),
+            "status_message": auth_meta.get("status_message") or "",
+            "next_retry_after": auth_meta.get("next_retry_after"),
+            "failed": auth_meta.get("failed"),
+            "success": auth_meta.get("success"),
+        },
+        "source": "codex-jwt-probe",
+        "notes": [],
+        "error": None,
+    }
+
+    if not auth:
+        result["error"] = "auth file not found"
+        return result
+
+    result["account_id"] = auth.get("account_id")
+    token = auth.get("access_token") or ""
+
+    # JWT fallback data (always available, no network).
+    id_token = auth.get("id_token") or ""
+    claims = jwt_claims(id_token) if id_token else {}
+    oai_auth = claims.get("https://api.openai.com/auth") or {}
+    jwt_plan = oai_auth.get("chatgpt_plan_type")
+    jwt_until = oai_auth.get("chatgpt_subscription_active_until")
+
+    # Primary: accounts/check API.
+    api_ok = False
+    if token:
+        st, _, raw, err = http_request(
+            "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27",
+            token=token,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "codex_cli_rs/0.1.0",
+                "originator": "codex_cli_rs",
+            },
+            timeout=15,
+        )
+        data = None
+        if raw:
+            try:
+                data = json.loads(raw.decode("utf-8", errors="replace"))
+            except Exception:
+                data = None
+        if st == 200 and isinstance(data, dict):
+            accounts_map = data.get("accounts") or {}
+            # Prefer the account_id-keyed entry, fall back to "default".
+            acc_key = result["account_id"] if result["account_id"] in accounts_map else "default"
+            acc_data = accounts_map.get(acc_key) or {}
+            ent = acc_data.get("entitlement") or {}
+            acc_info = acc_data.get("account") or {}
+            if ent or acc_info:
+                api_ok = True
+                result["source"] = "codex-backend-accounts-check"
+                result["ok"] = True
+                result["plan_type"] = acc_info.get("plan_type") or jwt_plan
+                result["subscription_plan"] = ent.get("subscription_plan")
+                result["has_active_subscription"] = ent.get("has_active_subscription")
+                result["is_delinquent"] = ent.get("is_delinquent")
+                result["grace_period_end"] = ent.get("grace_period_end_timestamp")
+                result["billing_period"] = ent.get("billing_period")
+                result["billing_currency"] = ent.get("billing_currency")
+                result["renews_at"] = ent.get("renews_at")
+                # expires_at from entitlement is the authoritative end date.
+                result["subscription_active_until"] = ent.get("expires_at") or jwt_until
+                result["subscription_active_start"] = oai_auth.get("chatgpt_subscription_active_start")
+                result["notes"].append("subscription data from backend-api/accounts/check")
+            else:
+                result["notes"].append(f"accounts/check 200 but no entitlement: {str(data)[:120]}")
+        else:
+            result["notes"].append(f"accounts/check failed: {st} {err or ''}".strip())
+
+    # Fallback: JWT claims only.
+    if not api_ok:
+        if oai_auth:
+            result["ok"] = True
+            result["plan_type"] = jwt_plan
+            result["subscription_active_until"] = jwt_until
+            result["subscription_active_start"] = oai_auth.get("chatgpt_subscription_active_start")
+            result["source"] = "codex-jwt-fallback"
+            result["notes"].append("subscription info from id_token JWT (API failed)")
+        else:
+            at_claims = jwt_claims(token)
+            at_auth = at_claims.get("https://api.openai.com/auth") or {}
+            if at_auth:
+                result["plan_type"] = at_auth.get("chatgpt_plan_type")
+                result["account_id"] = result["account_id"] or at_auth.get("chatgpt_account_id")
+                result["ok"] = True
+                result["source"] = "codex-jwt-fallback"
+                result["notes"].append("plan_type from access_token JWT")
+
+    # Determine status flags from subscription data.
+    until = result.get("subscription_active_until")
+    grace = result.get("grace_period_end")
+    delinquent = result.get("is_delinquent")
+    now = datetime.now(timezone.utc)
+
+    # Grace period expiry is the hard deadline when account stops working.
+    deadline = None
+    if grace:
+        try:
+            deadline = datetime.fromisoformat(str(grace).replace("Z", "+00:00"))
+        except Exception:
+            deadline = None
+    if deadline is None and until:
+        try:
+            deadline = datetime.fromisoformat(str(until).replace("Z", "+00:00"))
+        except Exception:
+            deadline = None
+
+    if deadline:
+        days_left = (deadline - now).days
+        result["reset_summary"] = deadline.isoformat()
+        result["reset_at"] = deadline.isoformat()
+        if deadline < now:
+            result["team_blocked"] = True
+            result["blocked_reason"] = "subscription/grace period expired"
+            result["remaining_summary"] = "подписка истекла"
+        else:
+            plan_label = (result.get("plan_type") or "Plus").capitalize()
+            if delinquent:
+                result["remaining_summary"] = f"{plan_label} · просрочка, грейс до {deadline.strftime('%d.%m')}"
+                result["notes"].append(f"delinquent, grace period ends {grace}")
+                if days_left <= 5:
+                    result["notes"].append(f"grace period ends in {days_left}d")
+            else:
+                result["remaining_summary"] = f"{plan_label} до {deadline.strftime('%d.%m.%Y')}"
+    elif result.get("plan_type"):
+        result["remaining_summary"] = result["plan_type"].capitalize()
+
+    if not result.get("remaining_summary"):
+        result["remaining_summary"] = "нет данных подписки"
+
+    return result
+
+
+def probe_all_codex(files: list[dict[str, Any]]) -> dict[str, Any]:
+    out: dict[str, Any] = {"updated_at": now_iso(), "accounts": {}}
+    for f in files:
+        if (f.get("provider") or f.get("type")) != "codex":
+            continue
+        email = f.get("email") or f.get("account")
+        if not email:
+            continue
+        try:
+            out["accounts"][email] = probe_codex_account(f)
+        except Exception as e:
+            out["accounts"][email] = {
+                "provider": "codex",
+                "email": email,
+                "probed_at": now_iso(),
+                "ok": False,
+                "error": str(e),
+                "notes": ["probe exception"],
+            }
+    return out
+
+
 def fetch_usage_from_pg(window_hours: int = USAGE_WINDOW_HOURS) -> tuple[dict[str, dict[str, Any]], list[str]]:
     errors: list[str] = []
     by_source: dict[str, dict[str, Any]] = {}
@@ -1483,6 +1719,13 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             # DeepSeek + OpenRouter wallet probes
             try:
                 ds_accounts = dict((_quota_cache or {}).get("accounts") or {})
+                # Codex (ChatGPT) subscription probe — JWT only, no network calls.
+                try:
+                    codex_result = probe_all_codex(files or [])
+                    if codex_result.get("accounts"):
+                        ds_accounts.update(codex_result["accounts"])
+                except Exception as e:
+                    errors.append(f"codex-subscription-probe: {e}")
                 ds_result = probe_deepseek_balance()
                 if ds_result is not None:
                     ds_accounts["deepseek-main"] = ds_result
@@ -1519,7 +1762,7 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         recent = f.get("recent_requests") or []
         recent_success = sum(int(x.get("success") or 0) for x in recent)
         recent_failed = sum(int(x.get("failed") or 0) for x in recent)
-        quota = quota_accounts.get(email) if provider == "xai" else None
+        quota = quota_accounts.get(email) if provider in ("xai", "codex") else None
 
         account = {
             "provider": provider,
@@ -1548,7 +1791,9 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
             "model_stats": list(tok.get("model_stats") or []),
             "window_hours": USAGE_WINDOW_HOURS,
             "quota": quota,
-            "source": "cpa+pg+xai-probe" if provider == "xai" else "cpa+pg",
+            "source": ("cpa+pg+xai-probe" if provider == "xai"
+                        else "cpa+pg+codex-api" if provider == "codex"
+                        else "cpa+pg"),
         }
         accounts.append(account)
 
@@ -1566,8 +1811,12 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         ps["requests"] += account["requests"]
 
     known_emails = {a["email"] for a in accounts}
+    orphan_count = 0
     for src, tok in usage_by_source.items():
         if src in known_emails:
+            continue
+        orphan_count += 1
+        if not INCLUDE_ORPHAN_USAGE:
             continue
         accounts.append({
             "provider": "unknown",
@@ -1642,6 +1891,8 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
                 "stats_by_provider": dict(provider_stats),
                 "usage_window_hours": USAGE_WINDOW_HOURS,
                 "usage_sources": len(usage_by_source),
+                "orphan_usage_hidden": orphan_count if not INCLUDE_ORPHAN_USAGE else 0,
+                "orphan_usage_included": INCLUDE_ORPHAN_USAGE,
                 "quota_probe_updated_at": (_quota_cache or {}).get("updated_at"),
             }
         },
@@ -1650,6 +1901,11 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
         "errors": errors,
         "notes": [
             "Tokens/models for CPA accounts from cliproxy postgres usage_records (durable), not CPA usage-queue.",
+            (
+                f"Hidden {orphan_count} orphan usage row(s) without CPA auth-file (set USAGE_INCLUDE_ORPHAN_USAGE=1 to show)."
+                if orphan_count and not INCLUDE_ORPHAN_USAGE
+                else "Orphan PG usage rows are included when USAGE_INCLUDE_ORPHAN_USAGE=1."
+            ),
             "DeepSeek wallet: balance only; 24h spend from local snapshots (no usage history API).",
             "OpenRouter wallet: account credits (total_credits-total_usage) + key usage_daily; rolling 24h from snapshots.",
             f"Usage window: last {USAGE_WINDOW_HOURS}h.",

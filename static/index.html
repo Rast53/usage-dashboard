@@ -246,11 +246,14 @@ function classify(item) {
   if (item.provider && item.provider !== 'zai' && item.provider !== 'deepseek' && item.provider !== 'openrouter') {
     const q = item.quota || {};
     const credits = q.credits || {};
+    if (item.status === 'orphan-usage') return 'warn';
     if (item.unavailable || q.team_blocked || (credits.used_percent != null && credits.used_percent >= 100)) {
       return 'critical';
     }
     const rem = credits.remaining_percent;
     if (rem != null && rem <= 40) return 'warn';
+    // Active billing window without percent: still healthy, but not fully known
+    if (rem == null && q.ok && (credits.period_end || q.reset_summary)) return 'ok';
     return 'ok';
   }
   // Z.AI wallet
@@ -566,6 +569,11 @@ function renderAccountCard(a) {
     const rem = credits.remaining_percent;
     const bCls = rem <= 40 ? 'warn' : 'ok';
     badge = '<span class="badge ' + bCls + '">' + rem + '%</span>';
+  } else if (a.status === 'orphan-usage') {
+    badge = '<span class="badge warn">orphan</span>';
+  } else if (q.ok && (credits.period_end || q.reset_summary)) {
+    // Some xAI accounts return billing period without percent fields
+    badge = '<span class="badge warn">n/a%</span>';
   } else {
     badge = '<span class="badge ok">OK</span>';
   }
@@ -578,6 +586,10 @@ function renderAccountCard(a) {
     resetLine = reason;
   } else if (resetAt) {
     resetLine = 'сброс ' + fmtDateShort(resetAt) + (resetRel ? ' · ' + resetRel : '');
+  } else if (a.status === 'orphan-usage') {
+    resetLine = 'нет auth-file в CPA';
+  } else if (q.remaining_summary) {
+    resetLine = q.remaining_summary;
   }
 
   // Progress bar
