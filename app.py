@@ -1710,7 +1710,8 @@ def fetch_usage_from_pg(window_hours: int = USAGE_WINDOW_HOURS) -> tuple[dict[st
     by_source: dict[str, dict[str, Any]] = {}
 
     if psycopg2 is None:
-        return by_source, ["psycopg2 not installed"]
+        # Postgres (cliproxy usage_records) decommissioned with aeza/CPA — no warning.
+        return by_source, []
 
     try:
         conn = psycopg2.connect(PG_DSN, connect_timeout=5)
@@ -1787,11 +1788,8 @@ def collect_cpa(force_quota: bool = False) -> dict[str, Any]:
     errors: list[str] = []
     files: list[dict[str, Any]] = []
 
-    try:
-        auth = cpa_get("/v0/management/auth-files")
-        files = auth.get("files") or []
-    except Exception as e:
-        errors.append(f"auth-files: {e}")
+    # CPA (CLIProxyAPI) decommissioned 2026-08-18 — skip auth-files fetch entirely
+    # (was: errors.append("auth-files: Connection refused") noise on the page).
 
     usage_by_source, usage_errors = fetch_usage_from_pg()
     errors.extend(usage_errors)
