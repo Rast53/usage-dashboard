@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import ssl
 import struct
 import threading
 import time
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -24,6 +26,13 @@ try:
     import psycopg2.extras
 except Exception:  # pragma: no cover
     psycopg2 = None
+
+try:
+    import socks
+    from sockshandler import SocksiPyHandler
+except Exception:  # pragma: no cover
+    socks = None
+    SocksiPyHandler = None
 
 CPA_BASE = os.environ.get("CPA_BASE", "http://127.0.0.1:8317")
 CPA_MGMT_TOKEN = os.environ.get("CPA_MGMT_TOKEN", "openclaw")
@@ -48,6 +57,7 @@ QUOTA_PROBE_SECONDS = int(os.environ.get("USAGE_QUOTA_PROBE_SECONDS", "300"))
 OPENCLAW_AGENTS_DIR = Path(os.environ.get("OPENCLAW_AGENTS_DIR", "/root/.openclaw/agents"))
 # DeepSeek direct API usage is not in CPA postgres; aggregate OpenClaw trajectory model.completed events.
 DEEPSEEK_USAGE_SOURCE = os.environ.get("DEEPSEEK_USAGE_SOURCE", "openclaw-trajectories")
+OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai"
 
 app = FastAPI(title="usage.raclaw.ru", version="0.2.0")
 _lock = threading.Lock()
@@ -154,6 +164,77 @@ def parse_int(val: Any) -> int | None:
         return None
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_openrouter_base_url() -> str:
+    raw = os.environ.get("OPENROUTER_BASE_URL", "").strip().rstrip("/")
+    return raw or OPENROUTER_DEFAULT_BASE_URL
+
+
+def get_openrouter_proxy() -> str | None:
+    raw = os.environ.get("OPENROUTER_PROXY", "").strip()
+    return raw or None
+
+
+def get_openrouter_ssl_verify() -> bool:
+    return not _env_flag("OPENROUTER_SSL_NO_VERIFY", default=False)
+
+
+def openrouter_api_url(path: str) -> str:
+    if not path.startswith("/"):
+        path = "/" + path
+    return get_openrouter_base_url() + path
+
+
+def redact_proxy_url(proxy: str | None) -> str | None:
+    """Strip userinfo from a proxy URL for logs / probe debug fields."""
+    if not proxy:
+        return None
+    parts = urlsplit(proxy)
+    host = parts.hostname or ""
+    netloc = f"{host}:{parts.port}" if parts.port else host
+    return urlunsplit((parts.scheme, netloc, "", "", ""))
+
+
+def _proxy_handlers(proxy: str) -> list[Any]:
+    parsed = urlsplit(proxy)
+    scheme = (parsed.scheme or "http").lower()
+    if scheme in ("http", "https"):
+        return [urlrequest.ProxyHandler({"http": proxy, "https": proxy})]
+    if scheme in ("socks", "socks5", "socks5h", "socks4"):
+        if socks is None or SocksiPyHandler is None:
+            raise RuntimeError("SOCKS proxy requires PySocks (pip install PySocks)")
+        host = parsed.hostname
+        if not host:
+            raise ValueError("SOCKS proxy URL is missing host")
+        port = parsed.port or 1080
+        username = unquote(parsed.username) if parsed.username else None
+        password = unquote(parsed.password) if parsed.password else None
+        rdns = scheme != "socks4"
+        proxy_type = socks.SOCKS4 if scheme == "socks4" else socks.SOCKS5
+        return [SocksiPyHandler(proxy_type, host, port, rdns, username, password)]
+    raise ValueError(f"unsupported proxy scheme: {scheme}")
+
+
+def _build_opener(proxy: str | None = None, ssl_verify: bool = True):
+    handlers: list[Any] = []
+    if proxy:
+        handlers.extend(_proxy_handlers(proxy))
+    if not ssl_verify:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        handlers.append(urlrequest.HTTPSHandler(context=ctx))
+    if handlers:
+        return urlrequest.build_opener(*handlers)
+    return urlrequest.build_opener()
+
+
 def http_request(
     url: str,
     token: str | None = None,
@@ -162,11 +243,9 @@ def http_request(
     body: bytes | None = None,
     headers: dict[str, str] | None = None,
     timeout: float = 20.0,
+    ssl_verify: bool = True,
 ) -> tuple[int | None, dict[str, str], bytes, str | None]:
-    handlers = []
-    if proxy:
-        handlers.append(urlrequest.ProxyHandler({"http": proxy, "https": proxy}))
-    opener = urlrequest.build_opener(*handlers) if handlers else urlrequest.build_opener()
+    opener = _build_opener(proxy=proxy, ssl_verify=ssl_verify)
     hdrs: dict[str, str] = {}
     if token:
         hdrs["Authorization"] = f"Bearer {token}"
@@ -196,11 +275,21 @@ def http_json(
     method: str = "GET",
     body: bytes | None = None,
     timeout: float = 20.0,
+    ssl_verify: bool = True,
 ) -> tuple[int | None, dict[str, str], Any, str | None]:
     headers = {"Accept": "application/json"}
     if body is not None:
         headers["Content-Type"] = "application/json"
-    st, hdrs, raw, err = http_request(url, token=token, proxy=proxy, method=method, body=body, headers=headers, timeout=timeout)
+    st, hdrs, raw, err = http_request(
+        url,
+        token=token,
+        proxy=proxy,
+        method=method,
+        body=body,
+        headers=headers,
+        timeout=timeout,
+        ssl_verify=ssl_verify,
+    )
     text = raw.decode("utf-8", errors="replace") if raw else ""
     try:
         data = json.loads(text) if text else None
@@ -671,10 +760,20 @@ def probe_openrouter_wallet() -> dict[str, Any]:
         result["error"] = "OPENROUTER_API_KEY not set"
         return result
 
+    proxy = get_openrouter_proxy()
+    ssl_verify = get_openrouter_ssl_verify()
+    result["via"] = {
+        "base_url": get_openrouter_base_url(),
+        "proxy": redact_proxy_url(proxy),
+        "ssl_verify": ssl_verify,
+    }
+
     st, _hdrs, data, err = http_json(
-        "https://openrouter.ai/api/v1/credits",
+        openrouter_api_url("/api/v1/credits"),
         token=key,
+        proxy=proxy,
         timeout=15.0,
+        ssl_verify=ssl_verify,
     )
     if st != 200 or not isinstance(data, dict):
         result["error"] = f"credits API: {st} {err or data}".strip()
@@ -697,9 +796,11 @@ def probe_openrouter_wallet() -> dict[str, Any]:
 
     # primary key stats
     st2, _h2, data2, err2 = http_json(
-        "https://openrouter.ai/api/v1/key",
+        openrouter_api_url("/api/v1/key"),
         token=key,
+        proxy=proxy,
         timeout=15.0,
+        ssl_verify=ssl_verify,
     )
     if st2 == 200 and isinstance(data2, dict):
         kpayload = data2.get("data") if isinstance(data2.get("data"), dict) else data2
@@ -720,9 +821,11 @@ def probe_openrouter_wallet() -> dict[str, Any]:
     mkey = get_openrouter_management_key()
     if mkey:
         st3, _h3, data3, err3 = http_json(
-            "https://openrouter.ai/api/v1/keys",
+            openrouter_api_url("/api/v1/keys"),
             token=mkey,
+            proxy=proxy,
             timeout=20.0,
+            ssl_verify=ssl_verify,
         )
         if st3 == 200 and isinstance(data3, dict):
             items = data3.get("data") or []
@@ -904,6 +1007,7 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
         "spend_24h": spend,
         "spent_summary": spent_summary,
         "source": "openrouter-credits-api+local-snapshots",
+        "via": or_probe.get("via"),
     }
 
 
