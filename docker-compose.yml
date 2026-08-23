@@ -19,7 +19,7 @@ services:
       - OPENROUTER_MANAGEMENT_KEY=${OPENROUTER_MANAGEMENT_KEY:-}
       # tw-msk DPI blocks openrouter.ai; default origin is London nginx :8444 over Tailscale.
       # Override to https://openrouter.ai + OPENROUTER_PROXY=socks5h://host.docker.internal:<port> for socks-relay.
-      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://100.69.177.71:8444}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-http://100.69.177.71:8444}
       - OPENROUTER_PROXY=${OPENROUTER_PROXY:-}
       - OPENROUTER_SSL_NO_VERIFY=${OPENROUTER_SSL_NO_VERIFY:-1}
       - ZAI_API_KEY=${ZAI_API_KEY:-}
