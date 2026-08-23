@@ -2,7 +2,7 @@
 
 Multi-provider AI usage dashboard — отслеживание подписок и лимитов.
 
-Live: **https://usage.raclaw.ru**
+Live: **https://usage.ragpt.ru**
 
 ## Что показывает
 
@@ -45,16 +45,13 @@ python3 app.py
 ```
 
 ## Deploy
-Хост: `/opt/usage-dashboard` на `aeza-helsinki-claw` (ssh root@100.72.158.83).
 
-Не git-репо — файлы копируются вручную:
-```bash
-scp static/index.html root@100.72.158.83:/opt/usage-dashboard/static/index.html
-ssh root@100.72.158.83 'systemctl restart usage-dashboard.service'
-```
+Live: Dockhand **stack 7** on `tw-msk-server`, `https://usage.ragpt.ru`.
+Push to `main` → git webhook → build/recreate. Container `usage-dashboard-usage-dashboard-1`.
 
-Сервис: `usage-dashboard.service` (systemd), порт 3210, behind Caddy.
-Env: `/opt/usage-dashboard/env` (CPA_BASE, CPA_MGMT_TOKEN, USAGE_PG_DSN, ZAI_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY).
+Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY`). Do not commit keys.
+
+Data volume: `/opt/usage-dashboard/data` → `/app/data`.
 
 ## License
 MIT
@@ -77,6 +74,7 @@ MIT
 - Key usage: `GET /api/v1/key` (usage_daily/weekly/monthly)
 - Optional all keys: management key `GET /api/v1/keys`
 - 24h spend: rolling snapshots of total_usage
+- tw-msk egress: `openrouter.ai` is DPI-blocked. Probe uses `OPENROUTER_BASE_URL` (compose default: London nginx `:8444` over Tailscale `100.69.177.71`) and/or `OPENROUTER_PROXY` (HTTP CONNECT or SOCKS5/SOCKS5h, OpenRouter-only). `OPENROUTER_SSL_NO_VERIFY=1` for HTTPS to the Tailscale IP. Values live in Dockhand stack env — do not commit secrets.
 
 ### Z.AI GLM Coding
 - Quotas: `GET https://api.z.ai/api/monitor/usage/quota/limit`

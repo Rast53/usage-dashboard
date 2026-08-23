@@ -4,7 +4,8 @@ WORKDIR /app
 
 # psycopg2 intentionally omitted: PG (cliproxyapi) decommissioned with aeza
 # (TASK-cliproxy-decommission); app.py tolerates missing psycopg2 with a warning.
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
+# PySocks: optional SOCKS5(h) for OPENROUTER_PROXY (tw-msk socks-relay → London).
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]" PySocks
 
 COPY app.py /app/app.py
 COPY static /app/static
