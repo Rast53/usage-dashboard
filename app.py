@@ -646,7 +646,7 @@ def aggregate_openrouter_models(
         for it in items:
             if not isinstance(it, dict):
                 continue
-            day = str(it.get("date") or "")
+            day = str(it.get("date") or "")[:10]  # реальный API: "2026-08-24 00:00:00", не ISO-only
             if day not in subset:
                 continue
             model = str(it.get("model") or it.get("model_permaslug") or "?").strip() or "?"

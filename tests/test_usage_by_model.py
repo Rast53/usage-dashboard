@@ -201,7 +201,7 @@ class OpenRouterModelsTest(unittest.TestCase):
                 "reasoning_tokens": 0,
             },
             {
-                "date": "2026-08-24",
+                "date": "2026-08-24 00:00:00",  # реальный формат API
                 "model": "openai/gpt-4.1",
                 "usage": 0.1,
                 "requests": 1,
