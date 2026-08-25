@@ -33,11 +33,25 @@ QUOTA_CACHE_PATH = DATA_DIR / "quota_cache.json"
 POLL_SECONDS = int(os.environ.get("USAGE_POLL_SECONDS", "60"))
 QUOTA_PROBE_SECONDS = int(os.environ.get("USAGE_QUOTA_PROBE_SECONDS", "300"))
 USAGE_WINDOW_HOURS = int(os.environ.get("USAGE_WINDOW_HOURS", "24"))
-WALLET_PROBE_KEYS = ("deepseek-main", "openrouter-main", "zai-main", "commandcode-main")
+WALLET_PROBE_KEYS = (
+    "deepseek-main",
+    "openrouter-main",
+    "zai-main",
+    "commandcode-main",
+    "kimi-main",
+)
 
 COMMANDCODE_API_BASE = "https://api.commandcode.ai"
 COMMANDCODE_CREDITS_PATH = "/alpha/billing/credits"
 COMMANDCODE_SUBSCRIPTIONS_PATH = "/alpha/billing/subscriptions"
+KIMI_CODE_DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1"
+KIMI_CODE_USAGES_PATH = "/usages"
+# Published weekly request quotas (Kimi Code membership docs 2026-08-25). 5h cap is 200 for all tiers.
+KIMI_WEEKLY_PLANS: dict[float, str] = {
+    1024.0: "Andante",
+    2048.0: "Moderato",
+    7168.0: "Allegretto",
+}
 # Published plan grants/caps (docs 2026-08-25). monthlyCredits on the wire is remaining, not total.
 COMMANDCODE_PLANS: dict[str, dict[str, Any]] = {
     "individual-go": {"label": "Go", "monthly_credits": 10.0, "session_cap": 3.0, "weekly_cap": 6.0},
@@ -1319,6 +1333,250 @@ def build_commandcode_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | N
     }
 
 
+def get_kimi_proxy() -> str | None:
+    """HTTP CONNECT or SOCKS5/SOCKS5h for api.kimi.com (optional tw-msk egress)."""
+    for name in ("KIMI_PROXY", "KIMI_CODE_PROXY"):
+        raw = os.environ.get(name, "").strip()
+        if raw:
+            return raw
+    return None
+
+
+def get_kimi_api_key() -> str | None:
+    """Env KIMI_API_KEY or KIMI_CODE_API_KEY (CodexBar / kimi-cli alias)."""
+    for name in ("KIMI_API_KEY", "KIMI_CODE_API_KEY"):
+        key = os.environ.get(name)
+        if key and len(key.strip()) > 10:
+            return key.strip()
+    return None
+
+
+def get_kimi_code_base_url() -> str:
+    raw = os.environ.get("KIMI_CODE_BASE_URL", "").strip().rstrip("/")
+    return raw or KIMI_CODE_DEFAULT_BASE_URL
+
+
+def kimi_usages_url() -> str:
+    base = get_kimi_code_base_url()
+    if base.endswith(KIMI_CODE_USAGES_PATH):
+        return base
+    return base + KIMI_CODE_USAGES_PATH
+
+
+def _kimi_reset_iso(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.replace(".", "", 1).isdigit():
+            return _commandcode_reset_iso(text)
+        try:
+            ts = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            return text
+    return _commandcode_reset_iso(value)
+
+
+def _kimi_window_minutes(window: Any) -> float | None:
+    if not isinstance(window, dict):
+        return None
+    duration = _as_float(_pick(window, "duration"))
+    if duration is None:
+        return None
+    unit = str(_pick(window, "timeUnit", "time_unit") or "").upper()
+    if "SECOND" in unit:
+        return duration / 60.0
+    if "HOUR" in unit:
+        return duration * 60.0
+    if "DAY" in unit:
+        return duration * 1440.0
+    return duration
+
+
+def _parse_kimi_quota(raw: Any, kind: str, label: str) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    cap = _as_float(_pick(raw, "limit", "cap", "totalQuota", "total_quota"))
+    used = _as_float(_pick(raw, "used", "usage"))
+    remaining = _as_float(_pick(raw, "remaining"))
+    if remaining is None and cap is not None and used is not None:
+        remaining = max(0.0, cap - used)
+    if used is None and cap is not None and remaining is not None:
+        used = max(0.0, cap - remaining)
+    if cap is None or cap <= 0:
+        return None
+    if used is None:
+        used = 0.0
+    if remaining is None:
+        remaining = max(0.0, cap - used)
+    used_pct = round((used / cap) * 100.0, 2)
+    rem_pct = round(max(0.0, (remaining / cap) * 100.0), 2)
+    reset_at = _kimi_reset_iso(_pick(raw, "resetTime", "reset_time", "reset_at", "resetAt"))
+    name = _pick(raw, "name")
+    summary = f"{rem_pct:.0f}% left ({label}) · {remaining:.0f} / {cap:.0f}"
+    if isinstance(name, str) and name.strip():
+        summary = f"{name.strip()} · {summary}"
+    return {
+        "kind": kind,
+        "used": used,
+        "cap": cap,
+        "remaining": remaining,
+        "used_percent": used_pct,
+        "remaining_percent": rem_pct,
+        "next_reset_at": reset_at,
+        "name": name if isinstance(name, str) else None,
+        "summary": summary,
+    }
+
+
+def _kimi_fresh_session() -> dict[str, Any]:
+    return {
+        "kind": "session",
+        "used": 0.0,
+        "cap": None,
+        "remaining": None,
+        "used_percent": 0.0,
+        "remaining_percent": 100.0,
+        "next_reset_at": None,
+        "name": None,
+        "summary": "100% left (5h) · window not started",
+    }
+
+
+def _kimi_plan_label(weekly_cap: float | None) -> str | None:
+    if weekly_cap is None:
+        return None
+    for cap, label in KIMI_WEEKLY_PLANS.items():
+        if abs(weekly_cap - cap) <= 0.05:
+            return label
+    return None
+
+
+def _kimi_api_error(data: Any, err: str | None, st: int | None) -> str:
+    if isinstance(data, dict):
+        err_obj = data.get("error")
+        if isinstance(err_obj, dict):
+            msg = err_obj.get("message") or err_obj.get("type")
+            if msg:
+                return f"usages API: {st} {msg}".strip()
+        if isinstance(err_obj, str) and err_obj:
+            return f"usages API: {st} {err_obj}".strip()
+        code = data.get("code")
+        if code:
+            return f"usages API: {st} {code}".strip()
+    return f"usages API: {st} {err or data}".strip()
+
+
+def probe_kimi_usage() -> dict[str, Any]:
+    """Fetch Kimi Coding weekly quota + rolling 5h window.
+
+    Primary: GET https://api.kimi.com/coding/v1/usages (Bearer Kimi Code API key).
+    Cookie GetUsages / Moonshot Open Platform are not used.
+    """
+    key = get_kimi_api_key()
+    result: dict[str, Any] = {
+        "provider": "kimi",
+        "email": "kimi-main",
+        "probed_at": now_iso(),
+        "ok": False,
+        "kind": "kimi-coding-quota",
+        "status": "error",
+        "plan_label": None,
+        "session": None,
+        "weekly": None,
+        "error": None,
+        "source": "kimi-coding-v1-usages",
+    }
+    if not key:
+        result["status"] = "manual"
+        result["error"] = "KIMI_API_KEY not set"
+        return result
+
+    proxy = get_kimi_proxy()
+    result["via"] = {
+        "base_url": get_kimi_code_base_url(),
+        "proxy": redact_proxy_url(proxy),
+    }
+
+    st, _hdrs, data, err = http_json(
+        kimi_usages_url(),
+        token=key,
+        proxy=proxy,
+        timeout=15.0,
+    )
+    if st != 200 or not isinstance(data, dict):
+        result["error"] = _kimi_api_error(data, err, st)
+        return result
+
+    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    if not isinstance(payload, dict):
+        payload = data
+    usage_raw = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+    weekly = _parse_kimi_quota(usage_raw, "weekly", "week")
+    limits_raw = payload.get("limits")
+    if not isinstance(limits_raw, list):
+        limits_raw = []
+
+    session = None
+    saw_five_hour = False
+    for item in limits_raw:
+        if not isinstance(item, dict):
+            continue
+        minutes = _kimi_window_minutes(item.get("window"))
+        detail = item.get("detail") if isinstance(item.get("detail"), dict) else item
+        parsed = _parse_kimi_quota(detail, "session", "5h")
+        if minutes is not None and abs(minutes - 300.0) <= 0.5:
+            saw_five_hour = True
+            session = parsed or _kimi_fresh_session()
+            break
+        if session is None and parsed:
+            session = parsed
+    if session is None and saw_five_hour:
+        session = _kimi_fresh_session()
+
+    plan_label = _kimi_plan_label(weekly["cap"] if weekly else None)
+
+    result["ok"] = True
+    result["status"] = "active"
+    result["plan_label"] = plan_label
+    result["session"] = session
+    result["weekly"] = weekly
+
+    parts = []
+    if weekly:
+        parts.append(weekly["summary"])
+    if session:
+        parts.append(session["summary"])
+    label = plan_label or "Kimi Coding"
+    result["remaining_summary"] = f"{label} · " + " · ".join(parts) if parts else str(label)
+    return result
+
+
+def build_kimi_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not probe:
+        return None
+    status = probe.get("status") or ("active" if probe.get("ok") else "error")
+    return {
+        "provider": "kimi",
+        "email": "kimi-main",
+        "name": "Kimi Coding",
+        "kind": "kimi-coding-quota",
+        "status": status,
+        "ok": bool(probe.get("ok")),
+        "plan_label": probe.get("plan_label"),
+        "session": probe.get("session") or {},
+        "weekly": probe.get("weekly") or {},
+        "remaining_summary": probe.get("remaining_summary") or "",
+        "error": probe.get("error"),
+        "probed_at": probe.get("probed_at"),
+        "source": probe.get("source") or "kimi-coding-v1-usages",
+        "via": probe.get("via"),
+    }
+
+
 def _probe_cache_stale(cache: dict[str, Any]) -> bool:
     acc = (cache or {}).get("accounts") or {}
     if not all(k in acc for k in WALLET_PROBE_KEYS):
@@ -1364,6 +1622,12 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
                     probed["commandcode-main"] = cc_result
             except Exception as e:
                 errors.append(f"commandcode-credits-probe: {e}")
+            try:
+                kimi_result = probe_kimi_usage()
+                if kimi_result is not None:
+                    probed["kimi-main"] = kimi_result
+            except Exception as e:
+                errors.append(f"kimi-usage-probe: {e}")
             _quota_cache = {
                 "updated_at": now_iso(),
                 "accounts": probed,
@@ -1376,6 +1640,7 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
     openrouter_wallet = build_openrouter_wallet(quota_accounts.get("openrouter-main"))
     zai_wallet = build_zai_wallet(quota_accounts.get("zai-main"))
     commandcode_wallet = build_commandcode_wallet(quota_accounts.get("commandcode-main"))
+    kimi_wallet = build_kimi_wallet(quota_accounts.get("kimi-main"))
     if deepseek_wallet:
         wallets["deepseek"] = deepseek_wallet
     if openrouter_wallet:
@@ -1384,6 +1649,8 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
         wallets["zai"] = zai_wallet
     if commandcode_wallet:
         wallets["commandcode"] = commandcode_wallet
+    if kimi_wallet:
+        wallets["kimi"] = kimi_wallet
 
     return {
         "updated_at": now_iso(),
@@ -1403,6 +1670,7 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
             "OpenRouter wallet: account credits (total_credits-total_usage) + key usage_daily; rolling 24h from snapshots.",
             "Z.AI wallet: short session + weekly token limits + MCP tools from quota/limit API.",
             "Command Code wallet: monthly remaining credits + 5h/weekly rolling windows from /alpha/billing/credits.",
+            "Kimi Coding wallet: weekly request quota + rolling 5h window from /coding/v1/usages.",
             f"Usage window: last {USAGE_WINDOW_HOURS}h.",
         ],
     }
@@ -1431,7 +1699,7 @@ def poller() -> None:
 @app.on_event("startup")
 def _startup() -> None:
     load_state()
-    # Do not block uvicorn bind on network probes (DeepSeek/OpenRouter/Z.AI/Command Code).
+    # Do not block uvicorn bind on network probes (DeepSeek/OpenRouter/Z.AI/Command Code/Kimi).
     def _bg() -> None:
         try:
             refresh_once(force_quota=True)
