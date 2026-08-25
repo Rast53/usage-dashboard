@@ -33,7 +33,19 @@ QUOTA_CACHE_PATH = DATA_DIR / "quota_cache.json"
 POLL_SECONDS = int(os.environ.get("USAGE_POLL_SECONDS", "60"))
 QUOTA_PROBE_SECONDS = int(os.environ.get("USAGE_QUOTA_PROBE_SECONDS", "300"))
 USAGE_WINDOW_HOURS = int(os.environ.get("USAGE_WINDOW_HOURS", "24"))
-WALLET_PROBE_KEYS = ("deepseek-main", "openrouter-main", "zai-main")
+WALLET_PROBE_KEYS = ("deepseek-main", "openrouter-main", "zai-main", "commandcode-main")
+
+COMMANDCODE_API_BASE = "https://api.commandcode.ai"
+COMMANDCODE_CREDITS_PATH = "/alpha/billing/credits"
+COMMANDCODE_SUBSCRIPTIONS_PATH = "/alpha/billing/subscriptions"
+# Published plan grants/caps (docs 2026-08-25). monthlyCredits on the wire is remaining, not total.
+COMMANDCODE_PLANS: dict[str, dict[str, Any]] = {
+    "individual-go": {"label": "Go", "monthly_credits": 10.0, "session_cap": 3.0, "weekly_cap": 6.0},
+    "individual-goat": {"label": "GOAT", "monthly_credits": 70.0, "session_cap": 14.0, "weekly_cap": 35.0},
+    "individual-pro": {"label": "Pro", "monthly_credits": 80.0, "session_cap": 16.0, "weekly_cap": 40.0},
+    "individual-max": {"label": "Max 10x", "monthly_credits": 150.0, "session_cap": 45.0, "weekly_cap": 90.0},
+    "individual-ultra": {"label": "Max 20x", "monthly_credits": 300.0, "session_cap": 90.0, "weekly_cap": 180.0},
+}
 
 OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai"
 
@@ -1018,6 +1030,292 @@ def build_zai_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def get_commandcode_proxy() -> str | None:
+    """HTTP CONNECT or SOCKS5/SOCKS5h for api.commandcode.ai (optional tw-msk egress)."""
+    raw = os.environ.get("COMMANDCODE_PROXY", "").strip()
+    return raw or None
+
+
+def get_commandcode_api_key() -> str | None:
+    """Env COMMANDCODE_API_KEY or COMMAND_CODE_API_KEY (pi-sub alias)."""
+    for name in ("COMMANDCODE_API_KEY", "COMMAND_CODE_API_KEY"):
+        key = os.environ.get(name)
+        if key and len(key.strip()) > 10:
+            return key.strip()
+    return None
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick(data: dict[str, Any] | None, *names: str) -> Any:
+    if not isinstance(data, dict):
+        return None
+    for name in names:
+        if name in data and data[name] is not None:
+            return data[name]
+    return None
+
+
+def _commandcode_reset_iso(value: Any) -> str | None:
+    ms = _as_float(value)
+    if ms is None or ms <= 0:
+        return None
+    if ms < 10_000_000_000:
+        ms *= 1000
+    return _ms_to_iso(ms)
+
+
+def _parse_commandcode_window(raw: Any, kind: str, label: str) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    used = _as_float(_pick(raw, "used", "usage"))
+    cap = _as_float(_pick(raw, "cap", "limit", "allowance"))
+    if used is None or cap is None or cap <= 0:
+        return None
+    used_pct = round((used / cap) * 100.0, 2)
+    rem_pct = round(max(0.0, 100.0 - used_pct), 2)
+    remaining_usd = round(max(0.0, cap - used), 4)
+    exceeded = raw.get("exceeded")
+    reset_at = _commandcode_reset_iso(_pick(raw, "resetAt", "reset_at", "resetsAt"))
+    entry: dict[str, Any] = {
+        "kind": kind,
+        "used": used,
+        "cap": cap,
+        "remaining_usd": remaining_usd,
+        "used_percent": used_pct,
+        "remaining_percent": rem_pct,
+        "exceeded": bool(exceeded) if exceeded is not None else rem_pct <= 0,
+        "next_reset_at": reset_at,
+        "summary": f"{rem_pct:.0f}% left ({label}) · ${remaining_usd:.2f} / ${cap:.2f}",
+    }
+    return entry
+
+
+def _commandcode_plan_from_caps(
+    session_cap: float | None,
+    weekly_cap: float | None,
+    plan_id: str | None = None,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Trust catalog total only when rolling caps match the published plan."""
+    if plan_id and plan_id in COMMANDCODE_PLANS:
+        plan = COMMANDCODE_PLANS[plan_id]
+        if session_cap is not None and weekly_cap is not None:
+            if abs(session_cap - float(plan["session_cap"])) <= 0.05 and abs(
+                weekly_cap - float(plan["weekly_cap"])
+            ) <= 0.05:
+                return plan_id, plan
+    if session_cap is None or weekly_cap is None:
+        return plan_id if plan_id in COMMANDCODE_PLANS else None, None
+    matches = [
+        (pid, spec)
+        for pid, spec in COMMANDCODE_PLANS.items()
+        if abs(session_cap - float(spec["session_cap"])) <= 0.05
+        and abs(weekly_cap - float(spec["weekly_cap"])) <= 0.05
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None, None
+
+
+def _unwrap_commandcode_payload(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict):
+        return None
+    inner = data.get("data")
+    if isinstance(inner, dict):
+        return inner
+    return data
+
+
+def probe_commandcode_credits() -> dict[str, Any]:
+    """Fetch Command Code GOAT (and other plans) credits + rolling windows.
+
+    Primary: GET https://api.commandcode.ai/alpha/billing/credits (Bearer Provider key).
+    Optional: GET .../alpha/billing/subscriptions for planId / billing period.
+    Cookie /internal/billing/* is not used (session, not Dockhand secret).
+    """
+    key = get_commandcode_api_key()
+    result: dict[str, Any] = {
+        "provider": "commandcode",
+        "email": "commandcode-main",
+        "probed_at": now_iso(),
+        "ok": False,
+        "kind": "commandcode-credits",
+        "status": "error",
+        "plan_id": None,
+        "plan_label": None,
+        "monthly_credits": None,
+        "monthly_allowance": None,
+        "purchased_credits": None,
+        "session": None,
+        "weekly": None,
+        "monthly": None,
+        "error": None,
+        "source": "commandcode-alpha-billing-credits",
+    }
+    if not key:
+        result["status"] = "manual"
+        result["error"] = "COMMANDCODE_API_KEY not set"
+        return result
+
+    proxy = get_commandcode_proxy()
+    result["via"] = {"proxy": redact_proxy_url(proxy)}
+
+    st, _hdrs, data, err = http_json(
+        COMMANDCODE_API_BASE + COMMANDCODE_CREDITS_PATH,
+        token=key,
+        proxy=proxy,
+        timeout=15.0,
+    )
+    if st != 200 or not isinstance(data, dict):
+        err_obj = data.get("error") if isinstance(data, dict) else None
+        msg = err_obj.get("message") if isinstance(err_obj, dict) else None
+        result["error"] = f"credits API: {st} {msg or err or data}".strip()
+        return result
+    if data.get("success") is False:
+        err_obj = data.get("error") if isinstance(data.get("error"), dict) else {}
+        msg = err_obj.get("message") or data
+        result["error"] = f"credits API: {st} {msg}".strip()
+        return result
+
+    payload = _unwrap_commandcode_payload(data) or {}
+    credits = payload.get("credits") if isinstance(payload.get("credits"), dict) else payload
+    window_limits = _pick(payload, "windowLimits", "window_limits")
+    if not isinstance(window_limits, dict):
+        window_limits = _pick(credits if isinstance(credits, dict) else {}, "windowLimits", "window_limits")
+    if not isinstance(window_limits, dict):
+        window_limits = {}
+    if not isinstance(credits, dict):
+        credits = {}
+
+    monthly_remaining = _as_float(_pick(credits, "monthlyCredits", "monthly_credits"))
+    purchased = _as_float(_pick(credits, "purchasedCredits", "purchased_credits")) or 0.0
+    five_raw = _pick(window_limits, "fiveHour", "five_hour")
+    week_raw = _pick(window_limits, "weekly")
+    session = _parse_commandcode_window(five_raw, "session", "5h")
+    weekly = _parse_commandcode_window(week_raw, "weekly", "week")
+
+    plan_id = None
+    period_end = None
+    try:
+        st2, _h2, data2, _e2 = http_json(
+            COMMANDCODE_API_BASE + COMMANDCODE_SUBSCRIPTIONS_PATH,
+            token=key,
+            proxy=proxy,
+            timeout=8.0,
+        )
+        if st2 == 200 and isinstance(data2, dict) and data2.get("success") is not False:
+            sub = _unwrap_commandcode_payload(data2) or {}
+            plan_id = _pick(sub, "planId", "plan_id")
+            if isinstance(plan_id, str):
+                plan_id = plan_id.strip() or None
+            period_end = _pick(sub, "currentPeriodEnd", "current_period_end")
+            result["subscription"] = {
+                "plan_id": plan_id,
+                "status": _pick(sub, "status"),
+                "current_period_end": period_end,
+            }
+    except Exception:
+        pass
+
+    session_cap = session["cap"] if session else None
+    weekly_cap = weekly["cap"] if weekly else None
+    matched_id, plan = _commandcode_plan_from_caps(session_cap, weekly_cap, plan_id if isinstance(plan_id, str) else None)
+    allowance = float(plan["monthly_credits"]) if plan else None
+    if (
+        allowance is not None
+        and monthly_remaining is not None
+        and monthly_remaining > allowance + 0.05
+    ):
+        allowance = None
+        plan = None
+        matched_id = None
+
+    monthly = None
+    if monthly_remaining is not None:
+        if allowance and allowance > 0:
+            used = round(max(0.0, allowance - monthly_remaining), 4)
+            used_pct = round((used / allowance) * 100.0, 2)
+            rem_pct = round(max(0.0, (monthly_remaining / allowance) * 100.0), 2)
+            monthly = {
+                "kind": "monthly",
+                "used": used,
+                "cap": allowance,
+                "remaining_usd": round(monthly_remaining, 4),
+                "used_percent": used_pct,
+                "remaining_percent": rem_pct,
+                "next_reset_at": period_end if isinstance(period_end, str) else None,
+                "summary": f"{rem_pct:.0f}% left (month) · ${monthly_remaining:.2f} / ${allowance:.2f}",
+            }
+        else:
+            monthly = {
+                "kind": "monthly",
+                "used": None,
+                "cap": None,
+                "remaining_usd": round(monthly_remaining, 4),
+                "used_percent": None,
+                "remaining_percent": None,
+                "next_reset_at": period_end if isinstance(period_end, str) else None,
+                "summary": f"${monthly_remaining:.2f} left (month)",
+            }
+
+    result["ok"] = True
+    result["status"] = "active"
+    result["plan_id"] = matched_id or (plan_id if isinstance(plan_id, str) else None)
+    result["plan_label"] = (plan or {}).get("label") if plan else None
+    result["monthly_credits"] = monthly_remaining
+    result["monthly_allowance"] = allowance
+    result["purchased_credits"] = purchased
+    result["session"] = session
+    result["weekly"] = weekly
+    result["monthly"] = monthly
+
+    parts = []
+    if monthly_remaining is not None:
+        parts.append(f"${monthly_remaining:.2f} month")
+    if session:
+        parts.append(session["summary"])
+    if weekly:
+        parts.append(weekly["summary"])
+    label = result["plan_label"] or result["plan_id"] or "Command Code"
+    result["remaining_summary"] = f"{label} · " + " · ".join(parts) if parts else str(label)
+    return result
+
+
+def build_commandcode_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not probe:
+        return None
+    status = probe.get("status") or ("active" if probe.get("ok") else "error")
+    return {
+        "provider": "commandcode",
+        "email": "commandcode-main",
+        "name": "Command Code",
+        "kind": "commandcode-credits",
+        "status": status,
+        "ok": bool(probe.get("ok")),
+        "plan_id": probe.get("plan_id"),
+        "plan_label": probe.get("plan_label"),
+        "monthly_credits": probe.get("monthly_credits"),
+        "monthly_allowance": probe.get("monthly_allowance"),
+        "purchased_credits": probe.get("purchased_credits"),
+        "session": probe.get("session") or {},
+        "weekly": probe.get("weekly") or {},
+        "monthly": probe.get("monthly") or {},
+        "remaining_summary": probe.get("remaining_summary") or "",
+        "subscription": probe.get("subscription"),
+        "error": probe.get("error"),
+        "probed_at": probe.get("probed_at"),
+        "source": probe.get("source") or "commandcode-alpha-billing-credits",
+        "via": probe.get("via"),
+    }
+
+
 def _probe_cache_stale(cache: dict[str, Any]) -> bool:
     acc = (cache or {}).get("accounts") or {}
     if not all(k in acc for k in WALLET_PROBE_KEYS):
@@ -1057,6 +1355,12 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
                     probed["zai-main"] = zai_result
             except Exception as e:
                 errors.append(f"zai-quota-probe: {e}")
+            try:
+                cc_result = probe_commandcode_credits()
+                if cc_result is not None:
+                    probed["commandcode-main"] = cc_result
+            except Exception as e:
+                errors.append(f"commandcode-credits-probe: {e}")
             _quota_cache = {
                 "updated_at": now_iso(),
                 "accounts": probed,
@@ -1068,12 +1372,15 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
     deepseek_wallet = build_deepseek_wallet(quota_accounts.get("deepseek-main"))
     openrouter_wallet = build_openrouter_wallet(quota_accounts.get("openrouter-main"))
     zai_wallet = build_zai_wallet(quota_accounts.get("zai-main"))
+    commandcode_wallet = build_commandcode_wallet(quota_accounts.get("commandcode-main"))
     if deepseek_wallet:
         wallets["deepseek"] = deepseek_wallet
     if openrouter_wallet:
         wallets["openrouter"] = openrouter_wallet
     if zai_wallet:
         wallets["zai"] = zai_wallet
+    if commandcode_wallet:
+        wallets["commandcode"] = commandcode_wallet
 
     return {
         "updated_at": now_iso(),
@@ -1092,6 +1399,7 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
             "DeepSeek wallet: balance only; 24h spend from local snapshots (no usage history API).",
             "OpenRouter wallet: account credits (total_credits-total_usage) + key usage_daily; rolling 24h from snapshots.",
             "Z.AI wallet: short session + weekly token limits + MCP tools from quota/limit API.",
+            "Command Code wallet: monthly remaining credits + 5h/weekly rolling windows from /alpha/billing/credits.",
             f"Usage window: last {USAGE_WINDOW_HOURS}h.",
         ],
     }
@@ -1120,7 +1428,7 @@ def poller() -> None:
 @app.on_event("startup")
 def _startup() -> None:
     load_state()
-    # Do not block uvicorn bind on network probes (DeepSeek/OpenRouter/Z.AI).
+    # Do not block uvicorn bind on network probes (DeepSeek/OpenRouter/Z.AI/Command Code).
     def _bg() -> None:
         try:
             refresh_once(force_quota=True)
