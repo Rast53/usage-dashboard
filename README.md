@@ -21,7 +21,7 @@ Browser → Traefik (usage.ragpt.ru)
        → FastAPI :3210
           ├─ DeepSeek API (balance)
           ├─ OpenRouter API (credits) via London reverse-proxy / OPENROUTER_PROXY
-          └─ Z.AI API (quota/limit)
+          └─ Z.AI API (quota/limit) via ZAI_PROXY (docker-egress)
 ```
 
 ## API
@@ -47,7 +47,7 @@ python3 app.py
 Live: Dockhand **stack 7** on `tw-msk-server`, `https://usage.ragpt.ru`.
 Push to `main` → git webhook → build/recreate. Container `usage-dashboard-usage-dashboard-1`.
 
-Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY`). Do not commit keys.
+Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY`). Do not commit keys or proxy passwords. `ZAI_PROXY` is `is_secret`.
 
 Data volume: `/opt/usage-dashboard/data` → `/app/data`. Historical `snapshots.jsonl` stays on the volume (24h spend); do not truncate it.
 
@@ -73,3 +73,4 @@ MIT
 - Три лимита: короткий (5ч), недельный, MCP инструменты (месячный)
 - Карточка показывает оба процентных лимита сразу; MCP в разворачиваемых деталях
 - Key: `ZAI_API_KEY` in Dockhand stack env
+- tw-msk docker-egress: прямой `api.z.ai` из контейнера не доходит. Probe uses `ZAI_PROXY` (HTTP CONNECT or SOCKS5/SOCKS5h, Z.AI-only). Value lives in Dockhand stack env as `is_secret` — do not commit the password/userinfo.
