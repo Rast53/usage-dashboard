@@ -288,6 +288,21 @@ function classify(item) {
     });
     return worst;
   }
+  // OpenCode Go wallet
+  if (item.provider === 'opencode-go' || item.kind === 'opencode-go-quota') {
+    if (item.status === 'manual') return 'warn';
+    if (!item.ok) return 'critical';
+    const sess = item.session || {};
+    const week = item.weekly || {};
+    const month = item.monthly || {};
+    const vals = [sess.remaining_percent, week.remaining_percent, month.remaining_percent].filter(function(v){ return v != null; });
+    let worst = 'ok';
+    vals.forEach(function(rem) {
+      if (rem <= 0) worst = 'critical';
+      else if (rem <= 40 && worst !== 'critical') worst = 'warn';
+    });
+    return worst;
+  }
   return 'ok';
 }
 
@@ -641,6 +656,74 @@ function renderKimiCard(w) {
   '</div>';
 }
 
+/* ── OpenCode Go card ── */
+function renderOpencodeGoCard(w) {
+  if (!w) return '';
+  const st = classify(w);
+  const sess = w.session || {};
+  const week = w.weekly || {};
+  const month = w.monthly || {};
+  const plan = w.plan_label || 'Go';
+  let badge;
+  if (w.status === 'manual') {
+    badge = '<span class="badge warn">manual</span>';
+  } else if (!w.ok) {
+    badge = '<span class="badge bad">error</span>';
+  } else {
+    badge = '<span class="badge ' + (st === 'critical' ? 'bad' : st === 'warn' ? 'warn' : 'ok') + '">' + escapeHtml(plan) + '</span>';
+  }
+
+  function usdLimitRow(label, lim) {
+    if (!lim || (lim.remaining_percent == null && lim.remaining_usd == null)) {
+      return '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val muted">—</span></div></div>';
+    }
+    const remPct = lim.remaining_percent;
+    const remUsd = lim.remaining_usd;
+    const cap = lim.cap;
+    const headline = remUsd != null ? ('$' + money(remUsd)) : (remPct != null ? (remPct + '%') : '—');
+    const cls = remPct == null ? 'ok' : (remPct <= 0 ? 'bad' : remPct <= 40 ? 'warn' : 'ok');
+    const width = remPct == null ? 0 : Math.max(0, Math.min(100, remPct));
+    const resetRel = lim.next_reset_at ? fmtRelative(lim.next_reset_at) : '';
+    const resetLine = lim.next_reset_at
+      ? ('сброс ' + fmtDateShort(lim.next_reset_at) + (resetRel ? ' · ' + resetRel : ''))
+      : '';
+    const usedLine = (lim.used_usd != null && cap != null)
+      ? ('used $' + money(lim.used_usd) + ' / $' + money(cap))
+      : (remPct != null ? ('осталось ' + remPct + '%') : '');
+    return '<div class="limit-row">' +
+      '<div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val ' + (cls === 'bad' ? 'bad-text' : cls === 'warn' ? 'warn-text' : '') + '">' + headline + '</span></div>' +
+      (remPct != null ? '<div class="bar ' + cls + '"><span style="width:' + width + '%"></span></div>' : '') +
+      (usedLine ? '<div class="bar-sub">' + usedLine + '</div>' : '') +
+      (resetLine ? '<div class="bar-sub">' + resetLine + '</div>' : '') +
+    '</div>';
+  }
+
+  const cardId = 'opencode-go-card';
+  const details =
+    '<div class="details-body">' +
+      '<div class="details-section">План</div>' +
+      '<div class="details-row"><span>label</span><span>' + escapeHtml(String(plan)) + '</span></div>' +
+      '<div class="details-row"><span>опубликовано</span><span class="muted">$12 / 5ч · $30 / нед · $60 / мес</span></div>' +
+      (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
+      '<div class="details-src">источник: GET /zen/go/v1/usage (percent = used)</div>' +
+      (w.error ? '<div class="details-src ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>' : '') +
+    '</div>';
+
+  const errLine = (!w.ok && w.error)
+    ? '<div class="bar-sub ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>'
+    : '';
+
+  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
+    '<div class="pcard-head"><span class="pcard-title">OpenCode · Go</span>' + badge + '</div>' +
+    usdLimitRow('короткий (5ч)', sess) +
+    usdLimitRow('недельный', week) +
+    usdLimitRow('месяц', month) +
+    errLine +
+    details +
+    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
+  '</div>';
+}
+
 /* ── Stats row ── */
 function renderStats(data) {
   const wallets = data.wallets || {};
@@ -648,6 +731,7 @@ function renderStats(data) {
   if (wallets.zai) allItems.push(wallets.zai);
   if (wallets.commandcode) allItems.push(wallets.commandcode);
   if (wallets.kimi) allItems.push(wallets.kimi);
+  if (wallets['opencode-go']) allItems.push(wallets['opencode-go']);
   if (wallets.deepseek) allItems.push(wallets.deepseek);
   if (wallets.openrouter) allItems.push(wallets.openrouter);
 
@@ -679,7 +763,7 @@ function renderStats(data) {
     '<div class="stat-card"><div class="stat-k">Расход 24ч</div><div class="stat-v">' + spendStr + '</div><div class="stat-sub">DeepSeek + OpenRouter</div></div>' +
     '<div class="stat-card"><div class="stat-k">Активных</div><div class="stat-v ok-text">' + active + '</div><div class="stat-sub">из ' + allItems.length + ' провайдеров</div></div>' +
     '<div class="stat-card ' + statClass + '"><div class="stat-k">Требует внимания</div><div class="stat-v ' + (attention > 0 ? 'bad-text' : '') + '">' + attention + '</div><div class="stat-sub">' + attSub + '</div></div>' +
-    '<div class="stat-card"><div class="stat-k">Источники</div><div class="stat-v">' + live + ' / ' + allItems.length + '</div><div class="stat-sub">DeepSeek · OpenRouter · Z.AI · Command Code · Kimi</div></div>';
+    '<div class="stat-card"><div class="stat-k">Источники</div><div class="stat-v">' + live + ' / ' + allItems.length + '</div><div class="stat-sub">DeepSeek · OpenRouter · Z.AI · Command Code · Kimi · OpenCode Go</div></div>';
 }
 
 /* ── Load / Refresh ── */
@@ -718,6 +802,7 @@ async function load() {
       renderZaiCard(wallets.zai),
       renderCommandcodeCard(wallets.commandcode),
       renderKimiCard(wallets.kimi),
+      renderOpencodeGoCard(wallets['opencode-go']),
       renderDeepseekCard(wallets.deepseek),
       renderOpenrouterCard(wallets.openrouter),
     ].filter(Boolean).join('');
