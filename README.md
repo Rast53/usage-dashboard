@@ -9,7 +9,7 @@ Live: **https://usage.ragpt.ru**
 Карточный дашборд (не таблица), человеческий язык, мобильная версия.
 
 - **Общая статистика сверху** — расход 24ч, активных, требует внимания, живые источники
-- **Карточки провайдеров** — Z.AI (оба лимита: короткий 5ч + недельный), Command Code GOAT (кредиты + окна 5ч / неделя / месяц), Kimi Coding (недельная квота + окно 5ч), DeepSeek (баланс), OpenRouter (кредиты). Цветовая подсветка: 🔴 критично / 🟡 внимание / 🟢 нормально
+- **Карточки провайдеров** — Z.AI (оба лимита: короткий 5ч + недельный), Command Code GOAT (кредиты + окна 5ч / неделя / месяц), Kimi Coding (недельная квота + окно 5ч), OpenCode Go (месячный лимит + окна 5ч / неделя, дата reset), DeepSeek (баланс), OpenRouter (кредиты). Цветовая подсветка: 🔴 критично / 🟡 внимание / 🟢 нормально
 - **Детали по клику** — точные квоты, ключи OpenRouter, балансы DeepSeek. Жаргон — только в разворачиваемом блоке
 - **Автообновление** каждые 30с (с сохранением раскрытых карточек)
 
@@ -23,14 +23,15 @@ Browser → Traefik (usage.ragpt.ru)
           ├─ OpenRouter API (credits) via London reverse-proxy / OPENROUTER_PROXY
           ├─ Z.AI API (quota/limit) via ZAI_PROXY (docker-egress)
           ├─ Command Code API (/alpha/billing/credits) via COMMANDCODE_API_KEY
-          └─ Kimi Coding API (/coding/v1/usages) via KIMI_API_KEY
+          ├─ Kimi Coding API (/coding/v1/usages) via KIMI_API_KEY
+          └─ OpenCode Go API (/zen/go/v1/usage) via OPENCODE_GO_API_KEY
 ```
 
 ## API
 - `GET /api/health` — статус
 - `GET /api/summary` — основной endpoint: wallets + errors
 - `GET /api/providers` — метаданные источников
-- `GET /api/wallets` — DeepSeek + OpenRouter + Z.AI + Command Code + Kimi
+- `GET /api/wallets` — DeepSeek + OpenRouter + Z.AI + Command Code + Kimi + OpenCode Go
 - `GET /api/quota` — кеш последних wallet-проб
 - `POST /api/refresh` — принудительное обновление проб
 
@@ -41,6 +42,7 @@ export OPENROUTER_API_KEY=...
 export ZAI_API_KEY=...
 export COMMANDCODE_API_KEY=...
 export KIMI_API_KEY=...
+export OPENCODE_GO_API_KEY=...
 export USAGE_PORT=3210
 export USAGE_STATIC_DIR=/path/to/static
 python3 app.py
@@ -51,7 +53,7 @@ python3 app.py
 Live: Dockhand **stack 7** on `tw-msk-server`, `https://usage.ragpt.ru`.
 Push to `main` → git webhook → build/recreate. Container `usage-dashboard-usage-dashboard-1`.
 
-Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI / COMMANDCODE / KIMI + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY` + optional `COMMANDCODE_PROXY` / `KIMI_PROXY` / `KIMI_CODE_BASE_URL`). Do not commit keys or proxy passwords. `ZAI_PROXY`, `COMMANDCODE_API_KEY` and `KIMI_API_KEY` are `is_secret`.
+Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI / COMMANDCODE / KIMI / OPENCODE_GO + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY` + optional `COMMANDCODE_PROXY` / `KIMI_PROXY` / `KIMI_CODE_BASE_URL` / `OPENCODE_GO_PROXY` / `OPENCODE_GO_BASE_URL`). Do not commit keys or proxy passwords. `ZAI_PROXY`, `COMMANDCODE_API_KEY`, `KIMI_API_KEY` and `OPENCODE_GO_API_KEY` are `is_secret`.
 
 Data volume: `/opt/usage-dashboard/data` → `/app/data`. Historical `snapshots.jsonl` stays on the volume (24h spend); do not truncate it.
 
@@ -93,3 +95,10 @@ MIT
 - Key: `KIMI_API_KEY` (alias `KIMI_CODE_API_KEY`) in Dockhand stack env (`is_secret`). Do not commit.
 - Cookie `GetUsages` / Moonshot Open Platform `api.moonshot.cn` are not used.
 - Optional `KIMI_PROXY` if docker-egress to `api.kimi.com` fails. Optional `KIMI_CODE_BASE_URL` (default `https://api.kimi.com/coding/v1`).
+
+### OpenCode Go
+- Monthly remaining + rolling 5h / weekly windows: `GET https://opencode.ai/zen/go/v1/usage` (Bearer Go API key)
+- Карточка: остаток месяца (и окна 5ч / неделя) + дата reset. На проводе `percent` = used; remaining% = 100 − used. USD — оценка от опубликованных cap'ов ($12 / $30 / $60). Нет ключа или API 401/403/сеть → badge `manual`/`error`, дашборд не падает.
+- Key: `OPENCODE_GO_API_KEY` (alias `OPENCODE_API_KEY`) in Dockhand stack env (`is_secret`). Do not commit.
+- Cookie `workspace/{id}/go` scrape / Zen balance are not used.
+- Optional `OPENCODE_GO_PROXY` if docker-egress to `opencode.ai` fails. Optional `OPENCODE_GO_BASE_URL` (default `https://opencode.ai/zen/go/v1`).
