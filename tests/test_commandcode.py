@@ -285,7 +285,24 @@ class ProbeCommandCodeCreditsTest(unittest.TestCase):
                                     "remaining_summary": "",
                                 },
                             ):
-                                state = app.collect_state(force_quota=True)
+                                with patch.object(
+                                    app,
+                                    "probe_opencode_go_usage",
+                                    return_value={
+                                        "ok": True,
+                                        "provider": "opencode-go",
+                                        "email": "opencode-go-main",
+                                        "kind": "opencode-go-quota",
+                                        "status": "active",
+                                        "session": {},
+                                        "weekly": {},
+                                        "monthly": {},
+                                        "error": None,
+                                        "probed_at": "t",
+                                        "remaining_summary": "",
+                                    },
+                                ):
+                                    state = app.collect_state(force_quota=True)
             self.assertIn("commandcode-credits-probe: boom", state["errors"])
             self.assertTrue(state["wallets"]["deepseek"]["ok"])
             self.assertTrue(state["wallets"]["openrouter"]["ok"])
