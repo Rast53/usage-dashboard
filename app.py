@@ -8,7 +8,7 @@ import os
 import ssl
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib import request as urlrequest
@@ -33,6 +33,8 @@ QUOTA_CACHE_PATH = DATA_DIR / "quota_cache.json"
 POLL_SECONDS = int(os.environ.get("USAGE_POLL_SECONDS", "60"))
 QUOTA_PROBE_SECONDS = int(os.environ.get("USAGE_QUOTA_PROBE_SECONDS", "300"))
 USAGE_WINDOW_HOURS = int(os.environ.get("USAGE_WINDOW_HOURS", "24"))
+USAGE_WINDOW_7D_HOURS = 168
+NO_MODEL_BREAKDOWN = "нет разбивки от провайдера"
 WALLET_PROBE_KEYS = (
     "deepseek-main",
     "openrouter-main",
@@ -136,6 +138,115 @@ def save_state(state: dict[str, Any]) -> None:
                 for a in state.get("accounts", [])
             ],
         }, ensure_ascii=False) + "\n")
+    invalidate_snapshot_cache()
+
+
+_snapshot_rows_cache: list[dict[str, Any]] | None = None
+_snapshot_rows_key: tuple[str, float, int] | None = None
+
+
+def invalidate_snapshot_cache() -> None:
+    global _snapshot_rows_cache, _snapshot_rows_key
+    _snapshot_rows_cache = None
+    _snapshot_rows_key = None
+
+
+def models_unavailable(detail: str | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "available": False,
+        "reason": NO_MODEL_BREAKDOWN,
+        "items": [],
+    }
+    if detail:
+        out["detail"] = detail
+    return out
+
+
+def parse_snapshot_ts(ts_raw: Any) -> tuple[float, str] | None:
+    if ts_raw is None:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        ts_s = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return ts.timestamp(), ts_s
+    except Exception:
+        return None
+
+
+def load_snapshot_rows() -> list[dict[str, Any]]:
+    """Parse snapshots.jsonl once per (path, mtime, size). Skip malformed lines; never raise."""
+    global _snapshot_rows_cache, _snapshot_rows_key
+    if not SNAPSHOT_PATH.exists():
+        invalidate_snapshot_cache()
+        return []
+    try:
+        st = SNAPSHOT_PATH.stat()
+        key = (str(SNAPSHOT_PATH), st.st_mtime, st.st_size)
+    except OSError:
+        return []
+    if _snapshot_rows_cache is not None and _snapshot_rows_key == key:
+        return _snapshot_rows_cache
+    rows: list[dict[str, Any]] = []
+    try:
+        with SNAPSHOT_PATH.open("r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(obj, dict):
+                    rows.append(obj)
+    except Exception:
+        return []
+    _snapshot_rows_cache = rows
+    _snapshot_rows_key = key
+    return rows
+
+
+def pick_baseline(
+    points: list[tuple[float, str, Any]],
+    window_hours: int,
+    now: datetime | None = None,
+) -> tuple[str | None, Any, bool, str | None]:
+    """Newest point at/before window start, else first in-window (partial).
+
+    Returns (baseline_at, value, partial, gap).
+    """
+    now_ts = (now or datetime.now(timezone.utc)).timestamp()
+    cutoff = now_ts - window_hours * 3600
+    pre: tuple[str, Any] | None = None
+    first_in: tuple[str, Any] | None = None
+    for epoch, ts_s, value in points:
+        if epoch < cutoff:
+            pre = (ts_s, value)
+            continue
+        if first_in is None:
+            first_in = (ts_s, value)
+    if pre is not None:
+        return pre[0], pre[1], False, None
+    if first_in is not None:
+        return first_in[0], first_in[1], True, None
+    return None, None, True, "no-history"
+
+
+def _empty_spend(window_hours: int, note: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "window_hours": window_hours,
+        "partial": True,
+        "gap": "no-history",
+        "baseline_at": None,
+        "spent": None,
+        "spent_summary": "недостаточно истории",
+        "note": note,
+    }
+    if extra:
+        out.update(extra)
+    return out
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -366,7 +477,7 @@ def compute_deepseek_spend_24h(
     current_balance: list[dict[str, Any]] | None,
     window_hours: int = USAGE_WINDOW_HOURS,
 ) -> dict[str, Any]:
-    """Estimate 24h spend as baseline_total - current_total from local snapshots.
+    """Estimate window spend as baseline_total - current_total from local snapshots.
 
     Positive spent = balance decreased. Negative = top-up / credit increased.
     Prefer newest snapshot at/before window start; else earliest in-window (partial).
@@ -374,6 +485,7 @@ def compute_deepseek_spend_24h(
     result: dict[str, Any] = {
         "window_hours": window_hours,
         "partial": True,
+        "gap": "no-history",
         "baseline_at": None,
         "current": _balance_totals(current_balance),
         "baseline": {},
@@ -385,50 +497,25 @@ def compute_deepseek_spend_24h(
         result["note"] = "no snapshots yet"
         return result
 
-    now = datetime.now(timezone.utc)
-    cutoff = now.timestamp() - window_hours * 3600
-    pre_window: tuple[str, list[dict[str, Any]]] | None = None
-    first_in_window: tuple[str, list[dict[str, Any]]] | None = None
+    points: list[tuple[float, str, list[dict[str, Any]]]] = []
     latest: tuple[str, list[dict[str, Any]]] | None = None
-
     try:
-        with SNAPSHOT_PATH.open("r", encoding="utf-8", errors="ignore") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except Exception:
-                    continue
-                ts_raw, bal = _extract_deepseek_balance_from_snapshot(obj)
-                if bal is None:
-                    continue
-                try:
-                    ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
-                    ts_epoch = ts.timestamp()
-                    ts_s = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                except Exception:
-                    continue
-                if ts_epoch < cutoff:
-                    pre_window = (ts_s, bal)
-                    continue
-                if first_in_window is None:
-                    first_in_window = (ts_s, bal)
-                latest = (ts_s, bal)
+        for obj in load_snapshot_rows():
+            ts_raw, bal = _extract_deepseek_balance_from_snapshot(obj)
+            if bal is None:
+                continue
+            parsed = parse_snapshot_ts(ts_raw)
+            if parsed is None:
+                continue
+            epoch, ts_s = parsed
+            points.append((epoch, ts_s, bal))
+            latest = (ts_s, bal)
     except Exception as e:
         result["note"] = f"snapshot read error: {e}"
         return result
 
-    if pre_window is not None:
-        baseline_ts, baseline_balance = pre_window
-        partial = False
-    elif first_in_window is not None:
-        baseline_ts, baseline_balance = first_in_window
-        partial = True
-    else:
+    baseline_ts, baseline_balance, partial, gap = pick_baseline(points, window_hours)
+    if gap or baseline_balance is None:
         return result
 
     cur_bal = current_balance if current_balance is not None else (latest[1] if latest else baseline_balance)
@@ -450,23 +537,31 @@ def compute_deepseek_spend_24h(
 
     result.update({
         "partial": partial,
+        "gap": None,
         "baseline_at": baseline_ts,
         "baseline": base,
         "current": cur,
         "spent": spent,
         "spent_summary": (" · ".join(pretty) if pretty else "0") + (" (частичная история)" if partial else ""),
         "note": (
-            "24h spend estimated from local snapshots: baseline_balance - current_balance. "
+            f"{window_hours}h spend estimated from local snapshots: baseline_balance - current_balance. "
             "DeepSeek API does not expose usage history."
         ),
     })
     return result
 
 
+def compute_deepseek_spend_7d(
+    current_balance: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    return compute_deepseek_spend_24h(current_balance, window_hours=USAGE_WINDOW_7D_HOURS)
+
+
 def build_deepseek_wallet(ds_quota: dict[str, Any] | None) -> dict[str, Any] | None:
     if not ds_quota:
         return None
     spend = compute_deepseek_spend_24h(ds_quota.get("balance"))
+    spend_7d = compute_deepseek_spend_7d(ds_quota.get("balance"))
     return {
         "provider": "deepseek",
         "email": "deepseek-main",
@@ -480,6 +575,8 @@ def build_deepseek_wallet(ds_quota: dict[str, Any] | None) -> dict[str, Any] | N
         "error": ds_quota.get("error"),
         "probed_at": ds_quota.get("probed_at"),
         "spend_24h": spend,
+        "spend_7d": spend_7d,
+        "models": models_unavailable("DeepSeek API has no per-model usage endpoint"),
         "source": "deepseek-balance-api+local-snapshots",
     }
 
@@ -534,11 +631,64 @@ def get_openrouter_management_key() -> str | None:
     return None
 
 
+def aggregate_openrouter_models(
+    items: list[Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Roll GET /api/v1/activity rows into per-model spend (UTC calendar days)."""
+    now = now or datetime.now(timezone.utc)
+    today = now.date()
+    day_24h = {today.isoformat(), (today - timedelta(days=1)).isoformat()}
+    day_7d = {(today - timedelta(days=i)).isoformat() for i in range(7)}
+
+    def _accumulate(subset: set[str]) -> list[dict[str, Any]]:
+        by_model: dict[str, dict[str, Any]] = {}
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            day = str(it.get("date") or "")
+            if day not in subset:
+                continue
+            model = str(it.get("model") or it.get("model_permaslug") or "?").strip() or "?"
+            bucket = by_model.setdefault(
+                model,
+                {
+                    "model": model,
+                    "usage": 0.0,
+                    "requests": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "reasoning_tokens": 0,
+                },
+            )
+            bucket["usage"] += float(it.get("usage") or 0)
+            bucket["requests"] += int(it.get("requests") or 0)
+            bucket["prompt_tokens"] += int(it.get("prompt_tokens") or 0)
+            bucket["completion_tokens"] += int(it.get("completion_tokens") or 0)
+            bucket["reasoning_tokens"] += int(it.get("reasoning_tokens") or 0)
+        out = sorted(by_model.values(), key=lambda row: float(row["usage"]), reverse=True)[:8]
+        for row in out:
+            row["usage"] = round(float(row["usage"]), 6)
+        return out
+
+    return {
+        "available": True,
+        "source": "openrouter-activity",
+        "endpoint": "/api/v1/activity",
+        "partial": True,
+        "reason": None,
+        "items": _accumulate(day_7d),
+        "items_24h": _accumulate(day_24h),
+        "note": "UTC calendar days from GET /api/v1/activity (management key); not rolling hours",
+    }
+
+
 def probe_openrouter_wallet() -> dict[str, Any]:
     """Fetch OpenRouter account credits + key usage.
 
     - GET /api/v1/credits → total_credits / total_usage (account-level)
     - GET /api/v1/key → per-key usage_daily/weekly/monthly
+    - GET /api/v1/activity → per-model usage (management key, last 30 UTC days)
     Remaining ≈ total_credits - total_usage
     """
     key = get_openrouter_api_key()
@@ -554,6 +704,7 @@ def probe_openrouter_wallet() -> dict[str, Any]:
         "key": None,
         "keys": [],
         "error": None,
+        "models": models_unavailable("GET /api/v1/activity требует management key"),
     }
     if not key:
         result["error"] = "OPENROUTER_API_KEY not set"
@@ -649,89 +800,85 @@ def probe_openrouter_wallet() -> dict[str, Any]:
         elif err3:
             result["keys_error"] = f"keys API: {st3} {err3}"
 
+    act_token = mkey or None
+    if act_token:
+        st4, _h4, data4, err4 = http_json(
+            openrouter_api_url("/api/v1/activity"),
+            token=act_token,
+            proxy=proxy,
+            timeout=20.0,
+            ssl_verify=ssl_verify,
+        )
+        if st4 == 200 and isinstance(data4, dict) and isinstance(data4.get("data"), list):
+            result["models"] = aggregate_openrouter_models(data4.get("data") or [])
+        else:
+            msg = None
+            if isinstance(data4, dict) and isinstance(data4.get("error"), dict):
+                msg = data4["error"].get("message")
+            result["models"] = models_unavailable(
+                f"activity API: {st4} {msg or err4 or data4}".strip()
+            )
     return result
+
+
+def _extract_openrouter_usage_from_snapshot(obj: dict[str, Any]) -> float | None:
+    wallets = obj.get("wallets") or {}
+    orw = wallets.get("openrouter") if isinstance(wallets, dict) else None
+    if isinstance(orw, dict) and orw.get("total_usage") is not None:
+        try:
+            return float(orw.get("total_usage"))
+        except Exception:
+            return None
+    return None
 
 
 def compute_openrouter_spend_24h(
     current_total_usage: float | None,
     window_hours: int = USAGE_WINDOW_HOURS,
 ) -> dict[str, Any]:
-    """Estimate rolling 24h spend from snapshots of account total_usage.
+    """Estimate rolling window spend from snapshots of account total_usage.
 
     spent = current_total_usage - baseline_total_usage (usage only goes up).
     """
     result: dict[str, Any] = {
         "window_hours": window_hours,
         "partial": True,
+        "gap": "no-history",
         "baseline_at": None,
         "baseline_total_usage": None,
         "current_total_usage": current_total_usage,
         "spent": None,
         "spent_summary": "недостаточно истории",
-        "note": "rolling 24h spend from local snapshots of OpenRouter total_usage",
+        "note": f"rolling {window_hours}h spend from local snapshots of OpenRouter total_usage",
     }
     if current_total_usage is None:
         result["note"] = "no current total_usage"
+        result["gap"] = "no-metric"
         return result
     if not SNAPSHOT_PATH.exists():
         result["note"] = "no snapshots yet"
         return result
 
-    now = datetime.now(timezone.utc)
-    cutoff = now.timestamp() - window_hours * 3600
-    pre_window: tuple[str, float] | None = None
-    first_in_window: tuple[str, float] | None = None
-
+    points: list[tuple[float, str, float]] = []
     try:
-        with SNAPSHOT_PATH.open("r", encoding="utf-8", errors="ignore") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except Exception:
-                    continue
-                ts_raw = obj.get("ts")
-                usage_val = None
-                wallets = obj.get("wallets") or {}
-                orw = wallets.get("openrouter") if isinstance(wallets, dict) else None
-                if isinstance(orw, dict) and orw.get("total_usage") is not None:
-                    try:
-                        usage_val = float(orw.get("total_usage"))
-                    except Exception:
-                        usage_val = None
-                if usage_val is None:
-                    continue
-                try:
-                    ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
-                    ts_epoch = ts.timestamp()
-                    ts_s = ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                except Exception:
-                    continue
-                if ts_epoch < cutoff:
-                    pre_window = (ts_s, usage_val)
-                    continue
-                if first_in_window is None:
-                    first_in_window = (ts_s, usage_val)
+        for obj in load_snapshot_rows():
+            usage_val = _extract_openrouter_usage_from_snapshot(obj)
+            if usage_val is None:
+                continue
+            parsed = parse_snapshot_ts(obj.get("ts"))
+            if parsed is None:
+                continue
+            points.append((parsed[0], parsed[1], usage_val))
     except Exception as e:
         result["note"] = f"snapshot read error: {e}"
         return result
 
-    if pre_window is not None:
-        baseline_at, baseline_usage = pre_window
-        partial = False
-    elif first_in_window is not None:
-        baseline_at, baseline_usage = first_in_window
-        partial = True
-    else:
+    baseline_at, baseline_usage, partial, gap = pick_baseline(points, window_hours)
+    if gap or baseline_usage is None:
         return result
 
     spent = round(float(current_total_usage) - float(baseline_usage), 6)
     if spent < 0:
-        # top-up / refund / reset edge-case
         spent_summary = f"+${abs(spent):.2f} (usage dropped)"
     else:
         spent_summary = f"−${spent:.2f}"
@@ -740,6 +887,7 @@ def compute_openrouter_spend_24h(
 
     result.update({
         "partial": partial,
+        "gap": None,
         "baseline_at": baseline_at,
         "baseline_total_usage": baseline_usage,
         "current_total_usage": float(current_total_usage),
@@ -749,10 +897,17 @@ def compute_openrouter_spend_24h(
     return result
 
 
+def compute_openrouter_spend_7d(current_total_usage: float | None) -> dict[str, Any]:
+    return compute_openrouter_spend_24h(
+        current_total_usage, window_hours=USAGE_WINDOW_7D_HOURS
+    )
+
+
 def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] | None:
     if not or_probe:
         return None
     spend = compute_openrouter_spend_24h(or_probe.get("total_usage"))
+    spend_7d = compute_openrouter_spend_7d(or_probe.get("total_usage"))
     key = or_probe.get("key") or {}
     keys = or_probe.get("keys") or []
     daily = key.get("usage_daily")
@@ -784,6 +939,9 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
             spent_summary = f"{spend.get('spent_summary')} · key today −${daily_f:.2f}"
 
     remaining = or_probe.get("remaining")
+    models = or_probe.get("models")
+    if not isinstance(models, dict):
+        models = models_unavailable("GET /api/v1/activity требует management key")
     return {
         "provider": "openrouter",
         "email": "openrouter-main",
@@ -804,7 +962,9 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
         "error": or_probe.get("error"),
         "probed_at": or_probe.get("probed_at"),
         "spend_24h": spend,
+        "spend_7d": spend_7d,
         "spent_summary": spent_summary,
+        "models": models,
         "source": "openrouter-credits-api+local-snapshots",
         "via": or_probe.get("via"),
     }
@@ -1051,6 +1211,9 @@ def build_zai_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
         "subscription": probe.get("subscription"),
         "error": probe.get("error"),
         "probed_at": probe.get("probed_at"),
+        "spend_24h": compute_zai_spend(probe, USAGE_WINDOW_HOURS),
+        "spend_7d": compute_zai_spend(probe, USAGE_WINDOW_7D_HOURS),
+        "models": models_unavailable("Z.AI quota/limit API has no per-model breakdown"),
         "source": "zai-monitor-quota-limit",
         "via": probe.get("via"),
     }
@@ -1078,6 +1241,206 @@ def _as_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _wallet_from_snapshot(obj: dict[str, Any], key: str) -> dict[str, Any] | None:
+    wallets = obj.get("wallets")
+    if not isinstance(wallets, dict):
+        return None
+    wallet = wallets.get(key)
+    return wallet if isinstance(wallet, dict) else None
+
+
+def _float_snapshot_points(
+    extract,
+) -> list[tuple[float, str, float]]:
+    points: list[tuple[float, str, float]] = []
+    for obj in load_snapshot_rows():
+        parsed = parse_snapshot_ts(obj.get("ts"))
+        if parsed is None:
+            continue
+        val = extract(obj)
+        if val is None:
+            continue
+        points.append((parsed[0], parsed[1], val))
+    return points
+
+
+def compute_quota_spend(
+    points: list[tuple[float, str, float]],
+    current: float | None,
+    window_hours: int,
+    *,
+    direction: str,
+    unit: str,
+    note: str,
+) -> dict[str, Any]:
+    """Snapshot delta for quota metrics.
+
+    direction='increase' → spent = current - baseline (used tokens/requests/%).
+    direction='decrease' → spent = baseline - current (remaining credits).
+    Negative consumption (window reset / refill) → gap window-reset, spent null.
+    """
+    extra = {"current": current, "unit": unit, "baseline": None}
+    result = _empty_spend(window_hours, note, extra=extra)
+    if current is None:
+        result["gap"] = "no-metric"
+        result["note"] = "no current metric"
+        return result
+    if not SNAPSHOT_PATH.exists():
+        result["note"] = "no snapshots yet"
+        return result
+    baseline_at, baseline, partial, gap = pick_baseline(points, window_hours)
+    if gap or baseline is None:
+        return result
+    if direction == "increase":
+        spent = round(float(current) - float(baseline), 6)
+    else:
+        spent = round(float(baseline) - float(current), 6)
+    if spent < 0:
+        result.update({
+            "partial": True,
+            "gap": "window-reset",
+            "baseline_at": baseline_at,
+            "baseline": baseline,
+            "current": float(current),
+            "spent": None,
+            "spent_summary": "сброс окна, дельта недоступна",
+            "note": note,
+        })
+        return result
+    if unit == "$":
+        summary = f"−${spent:.2f}"
+    elif unit == "%":
+        summary = f"−{spent:.1f}%"
+    else:
+        summary = f"−{spent:.2f} {unit}"
+    if partial:
+        summary += " (частичная история)"
+    result.update({
+        "partial": partial,
+        "gap": None,
+        "baseline_at": baseline_at,
+        "baseline": baseline,
+        "current": float(current),
+        "spent": spent,
+        "spent_summary": summary,
+        "note": note,
+        "unit": unit,
+    })
+    return result
+
+
+def _extract_zai_weekly_used(obj: dict[str, Any]) -> float | None:
+    wallet = _wallet_from_snapshot(obj, "zai")
+    if not wallet:
+        return None
+    weekly = wallet.get("weekly")
+    if not isinstance(weekly, dict):
+        return None
+    return _as_float(weekly.get("currentValue"))
+
+
+def compute_zai_spend(
+    probe: dict[str, Any] | None, window_hours: int
+) -> dict[str, Any]:
+    weekly = (probe or {}).get("weekly") if isinstance(probe, dict) else None
+    current = _as_float(weekly.get("currentValue")) if isinstance(weekly, dict) else None
+    return compute_quota_spend(
+        _float_snapshot_points(_extract_zai_weekly_used),
+        current,
+        window_hours,
+        direction="increase",
+        unit="tok",
+        note="Z.AI weekly currentValue delta from local snapshots",
+    )
+
+
+def _extract_commandcode_monthly_remaining(obj: dict[str, Any]) -> float | None:
+    wallet = _wallet_from_snapshot(obj, "commandcode")
+    if not wallet:
+        return None
+    monthly = wallet.get("monthly")
+    if isinstance(monthly, dict):
+        val = _as_float(monthly.get("remaining_usd"))
+        if val is not None:
+            return val
+    return _as_float(wallet.get("monthly_credits"))
+
+
+def compute_commandcode_spend(
+    probe: dict[str, Any] | None, window_hours: int
+) -> dict[str, Any]:
+    current = None
+    if isinstance(probe, dict):
+        monthly = probe.get("monthly")
+        if isinstance(monthly, dict):
+            current = _as_float(monthly.get("remaining_usd"))
+        if current is None:
+            current = _as_float(probe.get("monthly_credits"))
+    return compute_quota_spend(
+        _float_snapshot_points(_extract_commandcode_monthly_remaining),
+        current,
+        window_hours,
+        direction="decrease",
+        unit="$",
+        note="Command Code monthly remaining credits delta from local snapshots",
+    )
+
+
+def _extract_kimi_weekly_used(obj: dict[str, Any]) -> float | None:
+    wallet = _wallet_from_snapshot(obj, "kimi")
+    if not wallet:
+        return None
+    weekly = wallet.get("weekly")
+    if not isinstance(weekly, dict):
+        return None
+    return _as_float(weekly.get("used"))
+
+
+def compute_kimi_spend(
+    probe: dict[str, Any] | None, window_hours: int
+) -> dict[str, Any]:
+    weekly = (probe or {}).get("weekly") if isinstance(probe, dict) else None
+    current = _as_float(weekly.get("used")) if isinstance(weekly, dict) else None
+    return compute_quota_spend(
+        _float_snapshot_points(_extract_kimi_weekly_used),
+        current,
+        window_hours,
+        direction="increase",
+        unit="req",
+        note="Kimi weekly used delta from local snapshots",
+    )
+
+
+def _extract_opencode_monthly_used(obj: dict[str, Any]) -> float | None:
+    wallet = _wallet_from_snapshot(obj, "opencode-go")
+    if not wallet:
+        return None
+    monthly = wallet.get("monthly")
+    if not isinstance(monthly, dict):
+        return None
+    used_usd = _as_float(monthly.get("used_usd"))
+    if used_usd is not None:
+        return used_usd
+    return None
+
+
+def compute_opencode_go_spend(
+    probe: dict[str, Any] | None, window_hours: int
+) -> dict[str, Any]:
+    monthly = (probe or {}).get("monthly") if isinstance(probe, dict) else None
+    current = None
+    if isinstance(monthly, dict):
+        current = _as_float(monthly.get("used_usd"))
+    return compute_quota_spend(
+        _float_snapshot_points(_extract_opencode_monthly_used),
+        current,
+        window_hours,
+        direction="increase",
+        unit="$",
+        note="OpenCode Go monthly used_usd delta from local snapshots",
+    )
 
 
 def _pick(data: dict[str, Any] | None, *names: str) -> Any:
@@ -1337,6 +1700,9 @@ def build_commandcode_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | N
         "subscription": probe.get("subscription"),
         "error": probe.get("error"),
         "probed_at": probe.get("probed_at"),
+        "spend_24h": compute_commandcode_spend(probe, USAGE_WINDOW_HOURS),
+        "spend_7d": compute_commandcode_spend(probe, USAGE_WINDOW_7D_HOURS),
+        "models": models_unavailable("Command Code billing API has no per-model breakdown"),
         "source": probe.get("source") or "commandcode-alpha-billing-credits",
         "via": probe.get("via"),
     }
@@ -1581,6 +1947,9 @@ def build_kimi_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
         "remaining_summary": probe.get("remaining_summary") or "",
         "error": probe.get("error"),
         "probed_at": probe.get("probed_at"),
+        "spend_24h": compute_kimi_spend(probe, USAGE_WINDOW_HOURS),
+        "spend_7d": compute_kimi_spend(probe, USAGE_WINDOW_7D_HOURS),
+        "models": models_unavailable("Kimi /coding/v1/usages has no per-model breakdown"),
         "source": probe.get("source") or "kimi-coding-v1-usages",
         "via": probe.get("via"),
     }
@@ -1812,6 +2181,9 @@ def build_opencode_go_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | N
         "remaining_summary": probe.get("remaining_summary") or "",
         "error": probe.get("error"),
         "probed_at": probe.get("probed_at"),
+        "spend_24h": compute_opencode_go_spend(probe, USAGE_WINDOW_HOURS),
+        "spend_7d": compute_opencode_go_spend(probe, USAGE_WINDOW_7D_HOURS),
+        "models": models_unavailable("OpenCode Go /zen/go/v1/usage has no per-model breakdown"),
         "source": probe.get("source") or "opencode-go-zen-v1-usage",
         "via": probe.get("via"),
     }
@@ -1915,13 +2287,13 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
         "wallets": wallets,
         "errors": errors,
         "notes": [
-            "DeepSeek wallet: balance only; 24h spend from local snapshots (no usage history API).",
-            "OpenRouter wallet: account credits (total_credits-total_usage) + key usage_daily; rolling 24h from snapshots.",
-            "Z.AI wallet: short session + weekly token limits + MCP tools from quota/limit API.",
-            "Command Code wallet: monthly remaining credits + 5h/weekly rolling windows from /alpha/billing/credits.",
-            "Kimi Coding wallet: weekly request quota + rolling 5h window from /coding/v1/usages.",
-            "OpenCode Go wallet: monthly remaining + 5h/weekly windows from /zen/go/v1/usage (percent is used; remaining = 100-used).",
-            f"Usage window: last {USAGE_WINDOW_HOURS}h.",
+            "DeepSeek wallet: balance only; 24h/7d spend from local snapshots (no usage history API); no per-model breakdown.",
+            "OpenRouter wallet: account credits + rolling 24h/7d from snapshots; per-model from GET /api/v1/activity (management key).",
+            "Z.AI wallet: short session + weekly token limits + MCP; 24h/7d from weekly currentValue snapshots; no per-model.",
+            "Command Code wallet: monthly remaining credits + 5h/weekly rolling windows; 24h/7d from monthly remaining snapshots; no per-model.",
+            "Kimi Coding wallet: weekly request quota + rolling 5h window; 24h/7d from weekly.used snapshots; no per-model.",
+            "OpenCode Go wallet: monthly remaining + 5h/weekly windows from /zen/go/v1/usage; 24h/7d from monthly used_usd snapshots; no per-model.",
+            f"Usage windows: last {USAGE_WINDOW_HOURS}h and {USAGE_WINDOW_7D_HOURS}h (7d).",
         ],
     }
 
