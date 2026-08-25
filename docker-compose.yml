@@ -1,5 +1,5 @@
 # Dockhand autodeploy on tw-msk-server (local socket env).
-# Wallet-only stack: DeepSeek / OpenRouter / Z.AI.
+# Wallet-only stack: DeepSeek / OpenRouter / Z.AI / Command Code.
 # ${VARS} + secrets come from dockhand stack_environment_variables (DEEPSEEK_API_KEY редактируется через UI).
 services:
   usage-dashboard:
@@ -26,6 +26,9 @@ services:
       # Direct docker egress to api.z.ai from tw-msk fails; HTTP CONNECT / SOCKS5(h).
       # Userinfo is a secret — set ZAI_PROXY in Dockhand stack env (is_secret). Never commit.
       - ZAI_PROXY=${ZAI_PROXY:-}
+      - COMMANDCODE_API_KEY=${COMMANDCODE_API_KEY:-}
+      # Optional: HTTP CONNECT / SOCKS5(h) if api.commandcode.ai is blocked from the container.
+      - COMMANDCODE_PROXY=${COMMANDCODE_PROXY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

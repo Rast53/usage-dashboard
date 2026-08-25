@@ -9,7 +9,7 @@ Live: **https://usage.ragpt.ru**
 Карточный дашборд (не таблица), человеческий язык, мобильная версия.
 
 - **Общая статистика сверху** — расход 24ч, активных, требует внимания, живые источники
-- **Карточки провайдеров** — Z.AI (оба лимита: короткий 5ч + недельный), DeepSeek (баланс), OpenRouter (кредиты). Цветовая подсветка: 🔴 критично / 🟡 внимание / 🟢 нормально
+- **Карточки провайдеров** — Z.AI (оба лимита: короткий 5ч + недельный), Command Code GOAT (кредиты + окна 5ч / неделя / месяц), DeepSeek (баланс), OpenRouter (кредиты). Цветовая подсветка: 🔴 критично / 🟡 внимание / 🟢 нормально
 - **Детали по клику** — точные квоты, ключи OpenRouter, балансы DeepSeek. Жаргон — только в разворачиваемом блоке
 - **Автообновление** каждые 30с (с сохранением раскрытых карточек)
 
@@ -21,14 +21,15 @@ Browser → Traefik (usage.ragpt.ru)
        → FastAPI :3210
           ├─ DeepSeek API (balance)
           ├─ OpenRouter API (credits) via London reverse-proxy / OPENROUTER_PROXY
-          └─ Z.AI API (quota/limit) via ZAI_PROXY (docker-egress)
+          ├─ Z.AI API (quota/limit) via ZAI_PROXY (docker-egress)
+          └─ Command Code API (/alpha/billing/credits) via COMMANDCODE_API_KEY
 ```
 
 ## API
 - `GET /api/health` — статус
 - `GET /api/summary` — основной endpoint: wallets + errors
 - `GET /api/providers` — метаданные источников
-- `GET /api/wallets` — DeepSeek + OpenRouter + Z.AI
+- `GET /api/wallets` — DeepSeek + OpenRouter + Z.AI + Command Code
 - `GET /api/quota` — кеш последних wallet-проб
 - `POST /api/refresh` — принудительное обновление проб
 
@@ -37,6 +38,7 @@ Browser → Traefik (usage.ragpt.ru)
 export DEEPSEEK_API_KEY=...
 export OPENROUTER_API_KEY=...
 export ZAI_API_KEY=...
+export COMMANDCODE_API_KEY=...
 export USAGE_PORT=3210
 export USAGE_STATIC_DIR=/path/to/static
 python3 app.py
@@ -47,7 +49,7 @@ python3 app.py
 Live: Dockhand **stack 7** on `tw-msk-server`, `https://usage.ragpt.ru`.
 Push to `main` → git webhook → build/recreate. Container `usage-dashboard-usage-dashboard-1`.
 
-Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY`). Do not commit keys or proxy passwords. `ZAI_PROXY` is `is_secret`.
+Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI / COMMANDCODE + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY` + optional `COMMANDCODE_PROXY`). Do not commit keys or proxy passwords. `ZAI_PROXY` and `COMMANDCODE_API_KEY` are `is_secret`.
 
 Data volume: `/opt/usage-dashboard/data` → `/app/data`. Historical `snapshots.jsonl` stays on the volume (24h spend); do not truncate it.
 
@@ -74,3 +76,11 @@ MIT
 - Карточка показывает оба процентных лимита сразу; MCP в разворачиваемых деталях
 - Key: `ZAI_API_KEY` in Dockhand stack env
 - tw-msk docker-egress: прямой `api.z.ai` из контейнера не доходит. Probe uses `ZAI_PROXY` (HTTP CONNECT or SOCKS5/SOCKS5h, Z.AI-only). Value lives in Dockhand stack env as `is_secret` — do not commit the password/userinfo.
+
+### Command Code GOAT
+- Credits + rolling windows: `GET https://api.commandcode.ai/alpha/billing/credits` (Bearer Provider API key)
+- Optional plan: `GET https://api.commandcode.ai/alpha/billing/subscriptions`
+- Карточка: остаток месяца + окна 5ч / неделя (GOAT published: $70 / $14 / $35). Нет ключа или API 401/сеть → badge `manual`/`error`, дашборд не падает.
+- Key: `COMMANDCODE_API_KEY` in Dockhand stack env (`is_secret`). Do not commit.
+- Cookie `/internal/billing/*` is not used.
+- Optional `COMMANDCODE_PROXY` if docker-egress to `api.commandcode.ai` fails.
