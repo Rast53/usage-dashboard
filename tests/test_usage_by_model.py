@@ -439,6 +439,7 @@ class WalletPayloadModelsTest(unittest.TestCase):
         for key in ("deepseek", "openrouter", "zai", "commandcode", "kimi", "opencode-go"):
             self.assertIn("spend_24h", wallets[key], key)
             self.assertIn("spend_7d", wallets[key], key)
+            self.assertIn("spend_series_7d", wallets[key], key)
             self.assertIn("models", wallets[key], key)
         self.assertTrue(wallets["openrouter"]["models"]["available"])
         self.assertEqual(
@@ -457,9 +458,13 @@ class UiCopyTest(unittest.TestCase):
     def test_index_has_gap_copy_and_spend_windows(self) -> None:
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         self.assertIn("нет разбивки от провайдера", html)
-        self.assertIn("renderSpendCompact", html)
-        self.assertIn("расход 7д", html)
+        self.assertIn("нет истории", html)
+        self.assertIn("sparklineSvg", html)
+        self.assertIn("allotmentBar", html)
         self.assertIn("По моделям", html)
+        self.assertIn("fonts.googleapis.com", html)
+        self.assertIn("family=Inter", html)
+        self.assertNotRegex(html, r"<script[^>]+src=")
         self.assertNotRegex(html, r"(?i)cpa|USAGE_PG_DSN|psycopg2")
 
 

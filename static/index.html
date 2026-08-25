@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Мои подписки · raclaw</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <style>
   :root {
     --bg: #0b0f14;
@@ -16,39 +19,34 @@
     --red: #f85149;
     --yellow: #d29922;
     --chip: #1a2330;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     background: radial-gradient(1200px 600px at 20% -10%, #152033 0%, var(--bg) 55%);
     color: var(--text);
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: 1280px; margin: 0 auto; padding: 28px 20px 48px; }
-
-  /* Header */
   header {
     display: flex; justify-content: space-between; align-items: center;
     gap: 16px; margin-bottom: 22px; flex-wrap: wrap;
   }
-  h1 { margin: 0; font-size: 26px; letter-spacing: -0.03em; }
+  h1 { margin: 0; font-size: 26px; letter-spacing: -0.03em; font-weight: 750; }
   .sub { color: var(--muted); margin-top: 4px; font-size: 13px; }
   button {
     background: var(--card); color: var(--text); border: 1px solid var(--border);
     border-radius: 10px; padding: 9px 16px; cursor: pointer; font-size: 14px;
-    transition: border-color 0.15s;
+    font-family: inherit; transition: border-color 0.15s;
   }
   button:hover { border-color: var(--accent); }
-
-  /* Error banner */
   .err {
     background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.25);
     color: #ffb4af; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px;
   }
-
-  /* Stats row */
   .stats {
     display: grid; grid-template-columns: repeat(4, 1fr);
     gap: 12px; margin-bottom: 22px;
@@ -59,37 +57,36 @@
   }
   .stat-card.critical { border-color: rgba(248,81,73,0.4); }
   .stat-k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-  .stat-v { font-size: 24px; font-weight: 700; margin-top: 4px; letter-spacing: -0.03em; }
+  .stat-v { font-size: 24px; font-weight: 700; margin-top: 4px; letter-spacing: -0.03em; font-family: var(--mono); }
   .stat-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
-
-  /* Section label */
   .section-label {
     color: var(--muted); font-size: 12px; text-transform: uppercase;
     letter-spacing: 0.04em; margin: 0 0 10px;
   }
-
-  /* Card grid */
   .card-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 12px; margin-bottom: 22px;
+    gap: 12px; margin-bottom: 28px;
   }
-
-  /* Provider/account cards */
   .pcard {
     background: var(--card); border: 1px solid var(--border);
-    border-radius: 14px; padding: 14px 16px;
+    border-radius: 16px; padding: 16px 16px 12px;
     transition: border-color 0.15s;
   }
+  .pcard.prov-zai { background: linear-gradient(165deg, rgba(139,92,246,0.28) 0%, var(--card) 46%); }
+  .pcard.prov-commandcode { background: linear-gradient(165deg, rgba(245,158,11,0.26) 0%, var(--card) 46%); }
+  .pcard.prov-kimi { background: linear-gradient(165deg, rgba(249,115,22,0.26) 0%, var(--card) 46%); }
+  .pcard.prov-opencode-go { background: linear-gradient(165deg, rgba(34,211,238,0.24) 0%, var(--card) 46%); }
+  .pcard.prov-deepseek { background: linear-gradient(165deg, rgba(59,130,246,0.28) 0%, var(--card) 46%); }
+  .pcard.prov-openrouter { background: linear-gradient(165deg, rgba(16,185,129,0.26) 0%, var(--card) 46%); }
   .pcard.critical { border-color: rgba(248,81,73,0.45); }
   .pcard.warn { border-color: rgba(210,153,34,0.45); }
   .pcard.ok { border-color: var(--border); }
-
   .pcard-head {
     display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 8px; gap: 8px;
   }
   .pcard-title { font-weight: 650; font-size: 14px; letter-spacing: -0.01em; }
-
+  .head-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .badge {
     display: inline-block; border-radius: 999px; padding: 2px 10px;
     font-size: 11px; font-weight: 600; border: 1px solid var(--border);
@@ -97,32 +94,43 @@
   .badge.ok { color: var(--green); border-color: rgba(63,185,80,0.35); background: rgba(63,185,80,0.08); }
   .badge.warn { color: var(--yellow); border-color: rgba(210,153,34,0.35); background: rgba(210,153,34,0.08); }
   .badge.bad { color: var(--red); border-color: rgba(248,81,73,0.35); background: rgba(248,81,73,0.08); }
-
+  .badge.plan { color: var(--text); background: rgba(255,255,255,0.06); }
   .muted { color: var(--muted); }
   .ok-text { color: var(--green); }
   .bad-text { color: var(--red); }
   .warn-text { color: var(--yellow); }
-
-  /* Limit rows (Z.AI dual limits) */
-  .limit-row { margin-bottom: 8px; }
-  .limit-row-head {
-    display: flex; justify-content: space-between; align-items: baseline;
+  .hero { margin: 4px 0 2px; }
+  .hero-val {
+    font-size: 34px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.05;
+    font-family: var(--mono);
   }
-  .limit-label { font-size: 11px; color: var(--muted); }
-  .limit-val { font-size: 16px; font-weight: 700; }
-
-  /* Progress bar */
+  .hero-cap { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .delta-row {
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; margin: 12px 0 14px;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    border-radius: 999px; padding: 4px 10px;
+    font-size: 11px; font-weight: 600; background: var(--chip);
+    border: 1px solid var(--border); font-family: var(--mono);
+  }
+  .chip-empty { color: var(--muted); font-weight: 500; }
+  .chip-partial { color: var(--yellow); }
+  .spark { color: var(--accent); margin-left: auto; flex: 0 0 auto; }
+  .allot { margin-bottom: 10px; }
+  .allot-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .allot-label { font-size: 11px; color: var(--muted); }
+  .allot-pct { font-size: 12px; font-weight: 650; font-family: var(--mono); }
   .bar {
-    height: 5px; background: #1b2430; border-radius: 999px; overflow: hidden;
-    margin: 4px 0;
+    height: 6px; background: #1b2430; border-radius: 999px; overflow: hidden;
+    margin: 5px 0 4px;
   }
   .bar > span { display: block; height: 100%; border-radius: 999px; }
   .bar.ok > span { background: linear-gradient(90deg, #3fb950, #6cb6ff); }
   .bar.warn > span { background: #d29922; }
   .bar.bad > span { background: linear-gradient(90deg, #f85149, #ff7b72); }
   .bar-sub { font-size: 11px; color: var(--muted); }
-
-  /* Details toggle */
   .details-toggle {
     font-size: 11px; color: var(--accent); cursor: pointer; margin-top: 10px;
     border-top: 1px solid var(--border); padding-top: 8px;
@@ -133,28 +141,53 @@
   .pcard[data-expanded="true"] .details-body { display: block; }
   .pcard[data-expanded="true"] .details-toggle::before { content: '▴ свернуть'; }
   .pcard[data-expanded="false"] .details-toggle::before { content: '▾ детали'; }
-
   .details-section {
     font-size: 10px; color: var(--muted); text-transform: uppercase;
     letter-spacing: 0.04em; margin: 10px 0 6px;
   }
   .details-row {
-    display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px;
+    display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; gap: 12px;
   }
   .details-mono {
     font-size: 11px; color: #b7c6d8; line-height: 1.7;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-family: var(--mono);
   }
-  .details-src {
-    font-size: 10px; color: #3d4f66; margin-top: 8px;
+  .details-src { font-size: 10px; color: #3d4f66; margin-top: 8px; }
+  .models-block { margin-top: 8px; }
+  .table-wrap {
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    border: 1px solid var(--border); border-radius: 14px;
+    background: var(--card);
   }
-
-  /* Mobile */
+  table.models {
+    width: 100%; min-width: 520px; border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.models th, table.models td {
+    padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  table.models th {
+    text-align: left; color: var(--muted); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  table.models th.num, table.models td.num {
+    text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums;
+  }
+  table.models td.model { font-family: var(--mono); font-size: 12px; }
+  table.models tr:last-child td { border-bottom: 0; }
+  .models-note { font-size: 12px; color: var(--muted); padding: 12px 14px; }
   @media (max-width: 720px) {
     .wrap { padding: 18px 12px 36px; }
     .stats { grid-template-columns: 1fr 1fr; }
     .card-grid { grid-template-columns: 1fr; }
     h1 { font-size: 22px; }
+    .hero-val { font-size: 30px; }
+  }
+  @media (max-width: 390px) {
+    .wrap { padding: 14px 10px 32px; }
+    .card-grid { grid-template-columns: 1fr; }
+    .hero-val { font-size: 28px; }
+    .stats { gap: 8px; }
   }
 </style>
 </head>
@@ -173,6 +206,9 @@
 
     <div class="section-label">Провайдеры</div>
     <div class="card-grid" id="providers"></div>
+
+    <div class="section-label">По моделям · OpenRouter · 7д</div>
+    <div class="models-block" id="models"></div>
   </div>
 
 <script>
@@ -215,16 +251,15 @@ function money(v, digits) {
   if (v == null || v === '') return '—';
   const n = Number(v);
   if (Number.isNaN(n)) return String(v);
-  return n.toLocaleString('ru-RU', { minimumFractionDigits: digits||2, maximumFractionDigits: digits||2 });
+  const d = digits == null ? 2 : digits;
+  return n.toLocaleString('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 function escapeHtml(s) {
   if (s == null) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-/* ── Classify: returns 'critical' | 'warn' | 'ok' ── */
 function classify(item) {
-  // Z.AI wallet
   if (item.provider === 'zai' || item.kind === 'coding-quota') {
     if (!item.ok) return 'critical';
     const sess = item.session || {};
@@ -238,7 +273,6 @@ function classify(item) {
     else if (weekRem != null && weekRem <= 40) worst = 'warn';
     return worst;
   }
-  // DeepSeek wallet
   if (item.provider === 'deepseek' || item.kind === 'wallet-balance') {
     if (!item.ok || !item.is_available) return 'critical';
     const cny = (item.balance || []).find(function(b){ return b.currency === 'CNY'; });
@@ -249,7 +283,6 @@ function classify(item) {
     }
     return 'ok';
   }
-  // OpenRouter wallet
   if (item.provider === 'openrouter' || item.kind === 'wallet-credits') {
     if (!item.ok) return 'critical';
     const rem = item.remaining;
@@ -259,14 +292,10 @@ function classify(item) {
     }
     return 'ok';
   }
-  // Command Code wallet
   if (item.provider === 'commandcode' || item.kind === 'commandcode-credits') {
     if (item.status === 'manual') return 'warn';
     if (!item.ok) return 'critical';
-    const sess = item.session || {};
-    const week = item.weekly || {};
-    const month = item.monthly || {};
-    const vals = [sess.remaining_percent, week.remaining_percent, month.remaining_percent].filter(function(v){ return v != null; });
+    const vals = [item.session, item.weekly, item.monthly].map(function(w){ return w && w.remaining_percent; }).filter(function(v){ return v != null; });
     let worst = 'ok';
     vals.forEach(function(rem) {
       if (rem <= 0) worst = 'critical';
@@ -274,13 +303,10 @@ function classify(item) {
     });
     return worst;
   }
-  // Kimi Coding wallet
   if (item.provider === 'kimi' || item.kind === 'kimi-coding-quota') {
     if (item.status === 'manual') return 'warn';
     if (!item.ok) return 'critical';
-    const sess = item.session || {};
-    const week = item.weekly || {};
-    const vals = [sess.remaining_percent, week.remaining_percent].filter(function(v){ return v != null; });
+    const vals = [item.session, item.weekly].map(function(w){ return w && w.remaining_percent; }).filter(function(v){ return v != null; });
     let worst = 'ok';
     vals.forEach(function(rem) {
       if (rem <= 0) worst = 'critical';
@@ -288,14 +314,10 @@ function classify(item) {
     });
     return worst;
   }
-  // OpenCode Go wallet
   if (item.provider === 'opencode-go' || item.kind === 'opencode-go-quota') {
     if (item.status === 'manual') return 'warn';
     if (!item.ok) return 'critical';
-    const sess = item.session || {};
-    const week = item.weekly || {};
-    const month = item.monthly || {};
-    const vals = [sess.remaining_percent, week.remaining_percent, month.remaining_percent].filter(function(v){ return v != null; });
+    const vals = [item.session, item.weekly, item.monthly].map(function(w){ return w && w.remaining_percent; }).filter(function(v){ return v != null; });
     let worst = 'ok';
     vals.forEach(function(rem) {
       if (rem <= 0) worst = 'critical';
@@ -308,61 +330,201 @@ function classify(item) {
 
 const NO_MODEL_BREAKDOWN = 'нет разбивки от провайдера';
 
-function spendText(spend) {
-  if (!spend) return 'недостаточно истории';
-  if (spend.spent_summary) return String(spend.spent_summary);
-  if (spend.spent == null) return 'недостаточно истории';
-  if (typeof spend.spent === 'object') {
-    const cny = spend.spent.CNY != null ? Number(spend.spent.CNY) : null;
-    if (cny != null) return '¥' + money(Math.abs(cny));
-    const usd = spend.spent.USD != null ? Number(spend.spent.USD) : null;
-    if (usd != null) return '$' + money(Math.abs(usd));
+function compactSpend(spend) {
+  if (!spend || spend.spent == null) return null;
+  const s = spend.spent;
+  if (typeof s === 'object') {
+    if (s.CNY != null) return '¥' + money(Math.abs(Number(s.CNY)));
+    if (s.USD != null) return '$' + money(Math.abs(Number(s.USD)));
   }
-  return String(spend.spent);
+  const n = Number(s);
+  if (Number.isNaN(n)) return String(s);
+  const unit = spend.unit || '';
+  if (unit === '$') return '$' + money(n);
+  if (unit === '¥') return '¥' + money(n);
+  if (unit === '%') return money(n, 1) + '%';
+  if (unit === 'tok') return fmt(Math.round(n)) + ' ток.';
+  if (unit === 'req') return fmt(Math.round(n)) + ' req';
+  return money(n);
 }
 
-function renderSpendCompact(w) {
-  const s24 = w.spend_24h || {};
-  const s7 = w.spend_7d || {};
-  const t24 = spendText(s24);
-  const t7 = spendText(s7);
-  const meta = [];
-  if (s24.baseline_at) meta.push('24ч база ' + fmtDateShort(s24.baseline_at) + (s24.partial ? ' · partial' : ''));
-  if (s7.baseline_at) meta.push('7д база ' + fmtDateShort(s7.baseline_at) + (s7.partial ? ' · partial' : ''));
-  return '<div class="limit-row" style="margin-top:8px"><div class="limit-row-head"><span class="limit-label">расход 24ч</span><span class="limit-val">' + escapeHtml(t24) + '</span></div></div>' +
-    '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">расход 7д</span><span class="limit-val">' + escapeHtml(t7) + '</span></div></div>' +
-    (meta.length ? '<div class="bar-sub">' + escapeHtml(meta.join(' · ')) + '</div>' : '');
+function spendChip(label, spend) {
+  if (!spend || spend.spent == null || spend.gap === 'no-history') {
+    return '<span class="chip chip-empty">' + label + ' нет истории</span>';
+  }
+  if (spend.gap === 'window-reset') {
+    return '<span class="chip chip-empty">' + label + ' сброс окна</span>';
+  }
+  const amt = compactSpend(spend);
+  if (amt == null) return '<span class="chip chip-empty">' + label + ' нет истории</span>';
+  const tilde = spend.partial ? '~ ' : '';
+  const cls = spend.partial ? ' chip-partial' : '';
+  return '<span class="chip' + cls + '">' + tilde + label + ' −' + escapeHtml(amt) + '</span>';
+}
+
+function sparklineSvg(series) {
+  const pts = (series && series.points) || [];
+  const vals = pts.map(function(p) { return p.spent; });
+  const nums = vals.filter(function(v) { return v != null && !Number.isNaN(Number(v)); }).map(Number);
+  if (nums.length < 2) return '';
+  const w = 88, h = 28;
+  const min = Math.min.apply(null, nums);
+  const max = Math.max.apply(null, nums);
+  const span = (max - min) || 1;
+  const n = vals.length;
+  const coords = [];
+  for (let i = 0; i < n; i++) {
+    if (vals[i] == null) continue;
+    const x = n === 1 ? w / 2 : (i / (n - 1)) * (w - 2) + 1;
+    const y = h - 2 - ((Number(vals[i]) - min) / span) * (h - 4);
+    coords.push(x.toFixed(1) + ',' + y.toFixed(1));
+  }
+  if (coords.length < 2) return '';
+  return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" points="' + coords.join(' ') + '"/></svg>';
+}
+
+function usedPctOf(lim) {
+  if (!lim) return null;
+  if (lim.used_percent != null) return Number(lim.used_percent);
+  if (lim.remaining_percent != null) return 100 - Number(lim.remaining_percent);
+  if (lim.used != null && lim.cap) return (Number(lim.used) / Number(lim.cap)) * 100;
+  if (lim.used_usd != null && lim.cap) return (Number(lim.used_usd) / Number(lim.cap)) * 100;
+  return null;
+}
+
+function allotmentBar(label, lim, windowName) {
+  if (!lim) return '';
+  const remPct = lim.remaining_percent != null ? Number(lim.remaining_percent) : null;
+  const usedPct = usedPctOf(lim);
+  const hasMoney = lim.remaining_usd != null || lim.cap != null || lim.used != null || lim.used_usd != null || lim.remaining != null;
+  if (usedPct == null && remPct == null && !hasMoney) return '';
+  const used = usedPct == null ? 0 : Math.max(0, Math.min(100, usedPct));
+  let cls = 'ok';
+  if ((remPct != null && remPct <= 0) || used >= 90) cls = 'bad';
+  else if (used > 50) cls = 'warn';
+  const remText = remPct != null ? (Math.round(remPct) + '% осталось') : 'остаток';
+  let qty = '';
+  if (lim.remaining_usd != null && lim.cap != null) {
+    qty = ' · $' + money(lim.remaining_usd) + ' / $' + money(lim.cap);
+  } else if (lim.used_usd != null && lim.cap != null) {
+    qty = ' · $' + money(lim.used_usd) + ' / $' + money(lim.cap);
+  } else if (lim.used != null && lim.cap != null) {
+    qty = ' · ' + fmt(lim.used) + ' / ' + fmt(lim.cap);
+  } else if (lim.remaining != null && lim.cap != null) {
+    qty = ' · ' + fmt(lim.remaining) + ' / ' + fmt(lim.cap);
+  }
+  const resetRel = lim.next_reset_at ? fmtRelative(lim.next_reset_at) : '';
+  const resetLine = lim.next_reset_at
+    ? ('сброс ' + fmtDateShort(lim.next_reset_at) + (resetRel ? ' · ' + resetRel : ''))
+    : '';
+  return '<div class="allot">' +
+    '<div class="allot-head"><span class="allot-label">' + escapeHtml(label) + '</span>' +
+      '<span class="allot-pct ' + (cls === 'bad' ? 'bad-text' : cls === 'warn' ? 'warn-text' : '') + '">' +
+        (usedPct != null ? (Math.round(used) + '%') : '—') + '</span></div>' +
+    '<div class="bar ' + cls + '"><span style="width:' + used + '%"></span></div>' +
+    '<div class="bar-sub">' + escapeHtml(remText + ' (' + windowName + ')' + qty) + '</div>' +
+    (resetLine ? '<div class="bar-sub">' + escapeHtml(resetLine) + '</div>' : '') +
+  '</div>';
+}
+
+function heroFor(w) {
+  const p = w.provider;
+  if (p === 'openrouter') {
+    return {
+      value: w.remaining != null ? ('$' + money(w.remaining)) : '—',
+      caption: w.total_credits != null ? ('из $' + money(w.total_credits) + ' кредитов') : 'кредиты OpenRouter',
+      plan: 'credits',
+    };
+  }
+  if (p === 'deepseek') {
+    const bals = w.balance || [];
+    const cny = bals.find(function(b){ return b.currency === 'CNY'; }) || {};
+    const usd = bals.find(function(b){ return b.currency === 'USD'; }) || {};
+    let value = '—';
+    let caption = 'баланс';
+    if (cny.total_balance != null) {
+      value = '¥' + Number(cny.total_balance).toFixed(2);
+      caption = cny.topped_up_balance != null ? ('из ¥' + Number(cny.topped_up_balance).toFixed(2) + ' пополнения') : 'баланс CNY';
+    } else if (usd.total_balance != null) {
+      value = '$' + Number(usd.total_balance).toFixed(2);
+      caption = 'баланс USD';
+    }
+    return { value: value, caption: caption, plan: 'credits' };
+  }
+  if (p === 'zai') {
+    const week = w.weekly || {};
+    const rem = week.remaining_percent;
+    return {
+      value: rem != null ? (Math.round(Number(rem)) + '%') : '—',
+      caption: 'из недельной квоты',
+      plan: w.level || 'pro',
+    };
+  }
+  if (p === 'commandcode') {
+    const month = w.monthly || {};
+    const rem = month.remaining_usd != null ? month.remaining_usd : w.monthly_credits;
+    const cap = month.cap != null ? month.cap : w.monthly_allowance;
+    return {
+      value: rem != null ? ('$' + money(rem)) : '—',
+      caption: cap != null ? ('из $' + money(cap) + ' кредитов') : 'кредиты плана',
+      plan: w.plan_label || 'GOAT',
+    };
+  }
+  if (p === 'kimi') {
+    const week = w.weekly || {};
+    const rem = week.remaining_percent;
+    return {
+      value: rem != null ? (Math.round(Number(rem)) + '%') : '—',
+      caption: 'из недельной квоты',
+      plan: w.plan_label || 'Kimi',
+    };
+  }
+  if (p === 'opencode-go') {
+    const month = w.monthly || {};
+    const rem = month.remaining_usd;
+    const cap = month.cap;
+    return {
+      value: rem != null ? ('$' + money(rem)) : (month.remaining_percent != null ? (Math.round(month.remaining_percent) + '%') : '—'),
+      caption: cap != null ? ('из $' + money(cap) + ' / мес') : 'месячный лимит',
+      plan: w.plan_label || 'Go',
+    };
+  }
+  return { value: '—', caption: '', plan: '' };
+}
+
+function planBadge(w, plan, st) {
+  if (w.status === 'manual') return '<span class="badge warn">manual</span>';
+  if (!w.ok) return '<span class="badge bad">error</span>';
+  const tone = st === 'critical' ? 'bad' : st === 'warn' ? 'warn' : 'ok';
+  return '<span class="badge plan">' + escapeHtml(plan || 'plan') + '</span>' +
+    '<span class="badge ' + tone + '">' + (st === 'critical' ? 'crit' : st === 'warn' ? 'warn' : 'ok') + '</span>';
+}
+
+function openrouterCreditsBar(w) {
+  const total = w.total_credits;
+  const used = w.total_usage;
+  const rem = w.remaining;
+  if (total == null || used == null || !(total > 0)) return '';
+  const usedPct = Math.max(0, Math.min(100, (used / total) * 100));
+  const remPct = rem != null && total ? (rem / total) * 100 : (100 - usedPct);
+  const lim = { used_percent: usedPct, remaining_percent: remPct, remaining_usd: rem, cap: total };
+  return allotmentBar('кредиты', lim, 'план');
 }
 
 function renderSpendDetails(w) {
   const s24 = w.spend_24h || {};
   const s7 = w.spend_7d || {};
-  return '<div class="details-section">Расход (snapshots)</div>' +
-    '<div class="details-row"><span>24ч</span><span><b>' + escapeHtml(spendText(s24)) + '</b>' + (s24.partial ? ' <span class="warn-text">partial</span>' : '') + '</span></div>' +
-    '<div class="details-row"><span>7д</span><span><b>' + escapeHtml(spendText(s7)) + '</b>' + (s7.partial ? ' <span class="warn-text">partial</span>' : '') + '</span></div>';
+  function line(label, s) {
+    const amt = compactSpend(s);
+    const body = amt == null
+      ? (s.gap === 'window-reset' ? 'сброс окна' : 'нет истории')
+      : ('−' + amt);
+    const extra = s.partial && amt != null ? ' <span class="warn-text">~ частичная история</span>' : '';
+    return '<div class="details-row"><span>' + label + '</span><span><b>' + escapeHtml(body) + '</b>' + extra + '</span></div>';
+  }
+  return '<div class="details-section">Расход (snapshots)</div>' + line('24ч', s24) + line('7д', s7);
 }
 
-function renderModelsBlock(models) {
-  const m = models || {};
-  let html = '<div class="details-section">По моделям</div>';
-  if (!m.available) {
-    html += '<div class="details-row"><span class="muted">' + escapeHtml(m.reason || NO_MODEL_BREAKDOWN) + '</span></div>';
-    if (m.detail) html += '<div class="details-src muted">' + escapeHtml(String(m.detail)) + '</div>';
-    return html;
-  }
-  const items7 = m.items || [];
-  if (!items7.length) {
-    html += '<div class="details-row"><span class="muted">нет данных за период</span></div>';
-    return html;
-  }
-  html += '<div class="details-src">7д · GET /api/v1/activity' + (m.partial ? ' · UTC-дни, partial' : '') + '</div>';
-  items7.slice(0, 8).forEach(function(it) {
-    html += '<div class="details-row"><span>' + escapeHtml(it.model || '?') + '</span><span>$' + money(it.usage) + (it.requests != null ? ' · ' + it.requests + ' req' : '') + '</span></div>';
-  });
-  return html;
-}
-
-/* ── Toggle details ── */
 function toggleDetails(id) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -370,410 +532,200 @@ function toggleDetails(id) {
   el.setAttribute('data-expanded', expanded ? 'false' : 'true');
 }
 
-/* ── Z.AI card ── */
-function renderZaiCard(w) {
-  if (!w) return '';
-  const st = classify(w);
-  const sess = w.session || {};
-  const week = w.weekly || {};
+function detailsZai(w) {
   const mcp = w.mcp || {};
-  const level = w.level || '?';
-  const badge = w.ok
-    ? '<span class="badge ' + (st === 'critical' ? 'bad' : st === 'warn' ? 'warn' : 'ok') + '">plan ' + escapeHtml(level) + '</span>'
-    : '<span class="badge bad">error</span>';
-
-  function limitRow(label, lim, idPrefix) {
-    if (!lim || lim.remaining_percent == null) {
-      return '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val muted">—</span></div></div>';
-    }
-    const rem = lim.remaining_percent;
-    const used = lim.used_percent;
-    const cls = rem <= 0 ? 'bad' : rem <= 40 ? 'warn' : 'ok';
-    const width = Math.max(0, Math.min(100, rem));
-    const resetRel = lim.next_reset_at ? fmtRelative(lim.next_reset_at) : '';
-    const resetLine = lim.next_reset_at
-      ? ('сброс ' + fmtDateShort(lim.next_reset_at) + (resetRel ? ' · ' + resetRel : ''))
-      : '';
-    return '<div class="limit-row">' +
-      '<div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val ' + (cls === 'bad' ? 'bad-text' : cls === 'warn' ? 'warn-text' : '') + '">' + rem + '%</span></div>' +
-      '<div class="bar ' + cls + '"><span style="width:' + width + '%"></span></div>' +
-      (used != null ? '<div class="bar-sub">used ' + used + '%</div>' : '') +
-      (resetLine ? '<div class="bar-sub">' + resetLine + '</div>' : '') +
-    '</div>';
-  }
-
-  const cardId = 'zai-card';
-
-  // Details block
   const mcpCur = mcp.currentValue != null ? mcp.currentValue : '—';
   const mcpLim = mcp.usage != null ? mcp.usage : '—';
   const mcpRem = mcp.remaining != null ? mcp.remaining : '—';
   const mcpReset = mcp.next_reset_at ? (fmtDateShort(mcp.next_reset_at) + ' · ' + fmtRelative(mcp.next_reset_at)) : '—';
-
-  // exact token values from limits
   const sessLim = (w.limits || []).find(function(l){ return l.kind === 'session'; }) || {};
   const weekLim = (w.limits || []).find(function(l){ return l.kind === 'weekly'; }) || {};
   const mcpLimRaw = (w.limits || []).find(function(l){ return l.kind === 'mcp'; }) || {};
-
   function exactVal(lim) {
     const num = lim.number != null ? fmt(lim.number) : '—';
     const usage = lim.currentValue != null ? fmt(lim.currentValue) : '—';
-    const unit = lim.unit || '';
-    return usage + ' / ' + num + ' ' + escapeHtml(unit);
+    return usage + ' / ' + num + ' ' + escapeHtml(lim.unit || '');
   }
-
-  const details =
-    '<div class="details-body">' +
-      '<div class="details-section">MCP инструменты</div>' +
-      '<div class="details-row"><span>использовано</span><span><b>' + escapeHtml(String(mcpCur)) + '</b> / ' + escapeHtml(String(mcpLim)) + '</span></div>' +
-      '<div class="details-row"><span>осталось</span><span>' + escapeHtml(String(mcpRem)) + '</span></div>' +
-      '<div class="details-row"><span>сброс</span><span class="muted">' + mcpReset + '</span></div>' +
-      '<div class="details-section">Точные значения</div>' +
-      '<div class="details-mono">' +
-        'short: ' + exactVal(sessLim) + '<br>' +
-        'week: ' + exactVal(weekLim) + '<br>' +
-        'mcp: ' + exactVal(mcpLimRaw) + '<br>' +
-        (sessLim.summary ? ('summary: ' + escapeHtml(sessLim.summary)) : '') +
-      '</div>' +
-      renderSpendDetails(w) +
-      renderModelsBlock(w.models) +
-      '<div class="details-src">источник: /api/monitor/usage/quota/limit</div>' +
-      (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '') +
-    '</div>';
-
-  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
-    '<div class="pcard-head"><span class="pcard-title">Z.AI · GLM Coding</span>' + badge + '</div>' +
-    limitRow('короткий (5ч)', sess) +
-    limitRow('недельный', week) +
-    '<div class="bar-sub">MCP ' + escapeHtml(String(mcpCur)) + '/' + escapeHtml(String(mcpLim)) + '</div>' +
-    renderSpendCompact(w) +
-    details +
-    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
-  '</div>';
+  return '<div class="details-section">MCP инструменты</div>' +
+    '<div class="details-row"><span>использовано</span><span><b>' + escapeHtml(String(mcpCur)) + '</b> / ' + escapeHtml(String(mcpLim)) + '</span></div>' +
+    '<div class="details-row"><span>осталось</span><span>' + escapeHtml(String(mcpRem)) + '</span></div>' +
+    '<div class="details-row"><span>сброс</span><span class="muted">' + mcpReset + '</span></div>' +
+    '<div class="details-section">Точные значения</div>' +
+    '<div class="details-mono">short: ' + exactVal(sessLim) + '<br>week: ' + exactVal(weekLim) + '<br>mcp: ' + exactVal(mcpLimRaw) + '</div>' +
+    renderSpendDetails(w) +
+    '<div class="details-src">источник: /api/monitor/usage/quota/limit</div>' +
+    (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '');
 }
 
-/* ── Provider card stubs (Tasks 4–5) ── */
-function renderDeepseekCard(w) {
-  if (!w) return '';
-  const st = classify(w);
+function detailsDeepseek(w) {
   const bals = w.balance || [];
-  const cny = bals.find(function(b){ return b.currency === 'CNY'; }) || {};
-  const usd = bals.find(function(b){ return b.currency === 'USD'; }) || {};
-  const mainBal = (cny.total_balance != null)
-    ? ('¥' + Number(cny.total_balance).toFixed(2))
-    : ((usd.total_balance != null) ? ('$' + Number(usd.total_balance).toFixed(2)) : '—');
-  const avail = w.is_available ? '<span class="ok-text">available</span>' : '<span class="bad-text">unavailable</span>';
-  const badge = w.ok ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERR</span>';
-
-  const cardId = 'deepseek-card';
-
-  // Details
   let balDetails = '';
   bals.forEach(function(b) {
     const sym = b.currency === 'CNY' ? '¥' : '$';
     balDetails += '<div class="details-row"><span>' + escapeHtml(b.currency || '') + ' баланс</span><span><b>' + sym + Number(b.total_balance || 0).toFixed(2) + '</b></span></div>';
-    balDetails += '<div class="details-row"><span>topped up</span><span class="muted">' + sym + Number(b.topped_up_balance || 0).toFixed(2) + '</span></div>';
   });
-
-  const details =
-    '<div class="details-body">' +
-      '<div class="details-section">Балансы</div>' +
-      (balDetails || '<div class="details-row muted">нет данных</div>') +
-      renderSpendDetails(w) +
-      renderModelsBlock(w.models) +
-      '<div class="details-section">Статус</div>' +
-      '<div class="details-row"><span>доступен</span><span>' + avail + '</span></div>' +
-      (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
-      '<div class="details-src">источник: api.deepseek.com/user/balance + snapshots.jsonl</div>' +
-      (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '') +
-    '</div>';
-
-  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
-    '<div class="pcard-head"><span class="pcard-title">DeepSeek · баланс</span>' + badge + '</div>' +
-    '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">баланс</span><span class="limit-val">' + mainBal + '</span></div></div>' +
-    (cny.topped_up_balance != null ? '<div class="bar-sub">topped ¥' + Number(cny.topped_up_balance).toFixed(2) + '</div>' : '') +
-    renderSpendCompact(w) +
-    details +
-    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
-  '</div>';
+  const avail = w.is_available ? '<span class="ok-text">available</span>' : '<span class="bad-text">unavailable</span>';
+  return '<div class="details-section">Балансы</div>' + (balDetails || '<div class="details-row muted">нет данных</div>') +
+    renderSpendDetails(w) +
+    '<div class="details-section">Статус</div>' +
+    '<div class="details-row"><span>доступен</span><span>' + avail + '</span></div>' +
+    '<div class="details-src">источник: api.deepseek.com/user/balance + snapshots.jsonl</div>' +
+    (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '');
 }
-function renderOpenrouterCard(w) {
-  if (!w) return '';
-  const st = classify(w);
-  const rem = w.remaining;
-  const total = w.total_credits;
-  const used = w.total_usage;
-  const mainBal = (rem != null) ? ('$' + money(rem)) : '—';
-  const badge = w.ok ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERR</span>';
 
-  const daily = w.usage_daily;
-  const weekly = w.usage_weekly;
-  const monthly = w.usage_monthly;
-  const dailyAll = w.usage_daily_all_keys != null ? w.usage_daily_all_keys : daily;
-
-  // progress bar: used/total
-  let progressBar = '';
-  if (total != null && used != null && total > 0) {
-    const pct = Math.max(0, Math.min(100, (used / total) * 100));
-    const remPct = 100 - pct;
-    const cls = remPct <= 0 ? 'bad' : remPct <= 40 ? 'warn' : 'ok';
-    progressBar = '<div class="bar ' + cls + '"><span style="width:' + remPct + '%"></span></div>';
-  }
-
-  const cardId = 'openrouter-card';
-
-  // Details: key breakdown
+function detailsOpenrouter(w) {
   const keys = w.keys || [];
   let keysHtml = '';
   if (keys.length) {
-    keysHtml = keys.slice(0, 8).map(function(k) {
+    keysHtml = '<div class="details-section">Ключи</div>' + keys.slice(0, 8).map(function(k) {
       return '<div class="details-row"><span>' + escapeHtml(k.name || k.label || '?') + '</span><span>$' + money(k.usage_daily || 0) + ' today</span></div>';
     }).join('');
   }
+  return '<div class="details-section">Кредиты</div>' +
+    '<div class="details-row"><span>остаток</span><span><b>$' + money(w.remaining) + '</b></span></div>' +
+    '<div class="details-row"><span>использовано</span><span class="muted">$' + money(w.total_usage) + ' / $' + money(w.total_credits) + '</span></div>' +
+    renderSpendDetails(w) +
+    '<div class="details-row"><span>сегодня (all keys)</span><span>$' + money(w.usage_daily_all_keys != null ? w.usage_daily_all_keys : w.usage_daily) + '</span></div>' +
+    keysHtml +
+    '<div class="details-src">источник: /api/v1/credits + /api/v1/key + /api/v1/activity</div>' +
+    (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '');
+}
 
-  const details =
-    '<div class="details-body">' +
-      '<div class="details-section">Кредиты</div>' +
-      '<div class="details-row"><span>остаток</span><span><b>$' + money(rem) + '</b></span></div>' +
-      '<div class="details-row"><span>использовано</span><span class="muted">$' + money(used) + ' / $' + money(total) + '</span></div>' +
-      '<div class="details-section">Расход</div>' +
-      '<div class="details-row"><span>24ч (snapshots)</span><span>' + escapeHtml(spendText(w.spend_24h || {})) + '</span></div>' +
-      '<div class="details-row"><span>7д (snapshots)</span><span>' + escapeHtml(spendText(w.spend_7d || {})) + '</span></div>' +
-      '<div class="details-row"><span>сегодня (all keys)</span><span>$' + money(dailyAll) + '</span></div>' +
-      '<div class="details-row"><span>сегодня (this key)</span><span>$' + money(daily) + '</span></div>' +
-      '<div class="details-row"><span>неделя (key API)</span><span>$' + money(weekly) + '</span></div>' +
-      '<div class="details-row"><span>месяц (key API)</span><span>$' + money(monthly) + '</span></div>' +
-      (keysHtml ? '<div class="details-section">Ключи</div>' + keysHtml : '') +
-      renderModelsBlock(w.models) +
-      '<div class="details-src">источник: /api/v1/credits + /api/v1/key + /api/v1/activity</div>' +
-      (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '') +
-    '</div>';
+function detailsSimple(w, extraRows, source) {
+  let html = extraRows || '';
+  if (w.remaining_summary) html += '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>';
+  html += renderSpendDetails(w);
+  html += '<div class="details-src">источник: ' + escapeHtml(source) + '</div>';
+  if (w.error) {
+    html += '<div class="details-src ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>';
+  }
+  return html;
+}
 
-  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
-    '<div class="pcard-head"><span class="pcard-title">OpenRouter · credits</span>' + badge + '</div>' +
-    '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">остаток</span><span class="limit-val">' + mainBal + '</span></div></div>' +
-    (used != null && total != null ? '<div class="bar-sub">used $' + money(used) + ' / $' + money(total) + '</div>' : '') +
-    progressBar +
-    renderSpendCompact(w) +
-    '<div class="bar-sub">week $' + money(weekly) + ' · month $' + money(monthly) + '</div>' +
-    details +
-    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
+function renderProviderCard(w, spec) {
+  if (!w) return '';
+  const st = classify(w);
+  const hero = heroFor(w);
+  const chips = spendChip('24ч', w.spend_24h) + spendChip('7д', w.spend_7d);
+  const spark = sparklineSvg(w.spend_series_7d);
+  let bars = '';
+  (spec.windows || []).forEach(function(win) {
+    bars += allotmentBar(win.label, w[win.key] || {}, win.window);
+  });
+  if (spec.creditsBar) bars += openrouterCreditsBar(w);
+  const errLine = (!w.ok && w.error)
+    ? '<div class="bar-sub ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>'
+    : '';
+  return '<div class="pcard ' + st + ' prov-' + spec.prov + '" id="' + spec.id + '" data-expanded="false">' +
+    '<div class="pcard-head"><span class="pcard-title">' + escapeHtml(spec.title) + '</span>' +
+      '<span class="head-badges">' + planBadge(w, hero.plan, st) + '</span></div>' +
+    '<div class="hero"><div class="hero-val">' + escapeHtml(hero.value) + '</div>' +
+      '<div class="hero-cap">' + escapeHtml(hero.caption) + '</div></div>' +
+    '<div class="delta-row">' + chips + spark + '</div>' +
+    bars + errLine +
+    '<div class="details-body">' + spec.details(w) + '</div>' +
+    '<div class="details-toggle" onclick="toggleDetails(\'' + spec.id + '\')"></div>' +
   '</div>';
 }
 
-/* ── Command Code card ── */
+function renderZaiCard(w) {
+  return renderProviderCard(w, {
+    id: 'zai-card', prov: 'zai', title: 'Z.AI · GLM Coding',
+    windows: [
+      { key: 'session', label: 'короткий', window: '5ч' },
+      { key: 'weekly', label: 'неделя', window: 'неделя' },
+    ],
+    details: detailsZai,
+  });
+}
 function renderCommandcodeCard(w) {
-  if (!w) return '';
-  const st = classify(w);
-  const sess = w.session || {};
-  const week = w.weekly || {};
-  const month = w.monthly || {};
-  const plan = w.plan_label || w.plan_id || 'GOAT';
-  let badge;
-  if (w.status === 'manual') {
-    badge = '<span class="badge warn">manual</span>';
-  } else if (!w.ok) {
-    badge = '<span class="badge bad">error</span>';
-  } else {
-    badge = '<span class="badge ' + (st === 'critical' ? 'bad' : st === 'warn' ? 'warn' : 'ok') + '">' + escapeHtml(plan) + '</span>';
-  }
-
-  function usdLimitRow(label, lim) {
-    if (!lim || (lim.remaining_percent == null && lim.remaining_usd == null)) {
-      return '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val muted">—</span></div></div>';
-    }
-    const remPct = lim.remaining_percent;
-    const remUsd = lim.remaining_usd;
-    const cap = lim.cap;
-    const headline = remUsd != null ? ('$' + money(remUsd)) : (remPct != null ? (remPct + '%') : '—');
-    const cls = remPct == null ? 'ok' : (remPct <= 0 ? 'bad' : remPct <= 40 ? 'warn' : 'ok');
-    const width = remPct == null ? 0 : Math.max(0, Math.min(100, remPct));
-    const resetRel = lim.next_reset_at ? fmtRelative(lim.next_reset_at) : '';
-    const resetLine = lim.next_reset_at
-      ? ('сброс ' + fmtDateShort(lim.next_reset_at) + (resetRel ? ' · ' + resetRel : ''))
-      : '';
-    const usedLine = (lim.used != null && cap != null)
-      ? ('used $' + money(lim.used) + ' / $' + money(cap))
-      : (remPct != null ? ('осталось ' + remPct + '%') : '');
-    return '<div class="limit-row">' +
-      '<div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val ' + (cls === 'bad' ? 'bad-text' : cls === 'warn' ? 'warn-text' : '') + '">' + headline + '</span></div>' +
-      (remPct != null ? '<div class="bar ' + cls + '"><span style="width:' + width + '%"></span></div>' : '') +
-      (usedLine ? '<div class="bar-sub">' + usedLine + '</div>' : '') +
-      (resetLine ? '<div class="bar-sub">' + resetLine + '</div>' : '') +
-    '</div>';
-  }
-
-  const cardId = 'commandcode-card';
-  const purchased = w.purchased_credits != null ? ('$' + money(w.purchased_credits)) : '—';
-  const details =
-    '<div class="details-body">' +
-      '<div class="details-section">План</div>' +
-      '<div class="details-row"><span>label</span><span>' + escapeHtml(String(plan)) + '</span></div>' +
-      '<div class="details-row"><span>planId</span><span class="muted">' + escapeHtml(String(w.plan_id || '—')) + '</span></div>' +
-      '<div class="details-row"><span>top-up</span><span>' + purchased + '</span></div>' +
-      (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
-      renderSpendDetails(w) +
-      renderModelsBlock(w.models) +
-      '<div class="details-src">источник: /alpha/billing/credits (+ optional /subscriptions)</div>' +
-      (w.error ? '<div class="details-src ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>' : '') +
-    '</div>';
-
-  const errLine = (!w.ok && w.error)
-    ? '<div class="bar-sub ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>'
-    : '';
-
-  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
-    '<div class="pcard-head"><span class="pcard-title">Command Code · GOAT</span>' + badge + '</div>' +
-    usdLimitRow('короткий (5ч)', sess) +
-    usdLimitRow('недельный', week) +
-    usdLimitRow('месяц', month) +
-    renderSpendCompact(w) +
-    errLine +
-    details +
-    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
-  '</div>';
+  return renderProviderCard(w, {
+    id: 'commandcode-card', prov: 'commandcode', title: 'Command Code · GOAT',
+    windows: [
+      { key: 'session', label: 'короткий', window: '5ч' },
+      { key: 'weekly', label: 'неделя', window: 'неделя' },
+      { key: 'monthly', label: 'месяц', window: 'месяц' },
+    ],
+    details: function(card) {
+      return detailsSimple(card,
+        '<div class="details-section">План</div>' +
+        '<div class="details-row"><span>label</span><span>' + escapeHtml(String(card.plan_label || 'GOAT')) + '</span></div>' +
+        '<div class="details-row"><span>planId</span><span class="muted">' + escapeHtml(String(card.plan_id || '—')) + '</span></div>',
+        '/alpha/billing/credits (+ optional /subscriptions)');
+    },
+  });
 }
-
-/* ── Kimi Coding card ── */
 function renderKimiCard(w) {
-  if (!w) return '';
-  const st = classify(w);
-  const sess = w.session || {};
-  const week = w.weekly || {};
-  const plan = w.plan_label || 'Kimi';
-  let badge;
-  if (w.status === 'manual') {
-    badge = '<span class="badge warn">manual</span>';
-  } else if (!w.ok) {
-    badge = '<span class="badge bad">error</span>';
-  } else {
-    badge = '<span class="badge ' + (st === 'critical' ? 'bad' : st === 'warn' ? 'warn' : 'ok') + '">' + escapeHtml(plan) + '</span>';
-  }
-
-  function pctLimitRow(label, lim) {
-    if (!lim || (lim.remaining_percent == null && lim.remaining == null && lim.cap == null)) {
-      return '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val muted">—</span></div></div>';
-    }
-    const remPct = lim.remaining_percent;
-    const rem = lim.remaining;
-    const cap = lim.cap;
-    const headline = remPct != null ? (remPct + '%') : (rem != null && cap != null ? (fmt(rem) + ' / ' + fmt(cap)) : '—');
-    const cls = remPct == null ? 'ok' : (remPct <= 0 ? 'bad' : remPct <= 40 ? 'warn' : 'ok');
-    const width = remPct == null ? 0 : Math.max(0, Math.min(100, remPct));
-    const resetRel = lim.next_reset_at ? fmtRelative(lim.next_reset_at) : '';
-    const resetLine = lim.next_reset_at
-      ? ('сброс ' + fmtDateShort(lim.next_reset_at) + (resetRel ? ' · ' + resetRel : ''))
-      : '';
-    const usedLine = (lim.used != null && cap != null)
-      ? ('used ' + fmt(lim.used) + ' / ' + fmt(cap))
-      : (remPct != null ? ('осталось ' + remPct + '%') : '');
-    return '<div class="limit-row">' +
-      '<div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val ' + (cls === 'bad' ? 'bad-text' : cls === 'warn' ? 'warn-text' : '') + '">' + headline + '</span></div>' +
-      (remPct != null ? '<div class="bar ' + cls + '"><span style="width:' + width + '%"></span></div>' : '') +
-      (usedLine ? '<div class="bar-sub">' + usedLine + '</div>' : '') +
-      (resetLine ? '<div class="bar-sub">' + resetLine + '</div>' : '') +
-    '</div>';
-  }
-
-  const cardId = 'kimi-card';
-  const details =
-    '<div class="details-body">' +
-      '<div class="details-section">План</div>' +
-      '<div class="details-row"><span>label</span><span>' + escapeHtml(String(plan)) + '</span></div>' +
-      (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
-      renderSpendDetails(w) +
-      renderModelsBlock(w.models) +
-      '<div class="details-src">источник: GET /coding/v1/usages</div>' +
-      (w.error ? '<div class="details-src ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>' : '') +
-    '</div>';
-
-  const errLine = (!w.ok && w.error)
-    ? '<div class="bar-sub ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>'
-    : '';
-
-  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
-    '<div class="pcard-head"><span class="pcard-title">Kimi · Coding</span>' + badge + '</div>' +
-    pctLimitRow('короткий (5ч)', sess) +
-    pctLimitRow('недельный', week) +
-    renderSpendCompact(w) +
-    errLine +
-    details +
-    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
-  '</div>';
+  return renderProviderCard(w, {
+    id: 'kimi-card', prov: 'kimi', title: 'Kimi · Coding',
+    windows: [
+      { key: 'session', label: 'короткий', window: '5ч' },
+      { key: 'weekly', label: 'неделя', window: 'неделя' },
+    ],
+    details: function(card) {
+      return detailsSimple(card, '<div class="details-section">План</div><div class="details-row"><span>label</span><span>' + escapeHtml(String(card.plan_label || 'Kimi')) + '</span></div>', 'GET /coding/v1/usages');
+    },
+  });
 }
-
-/* ── OpenCode Go card ── */
 function renderOpencodeGoCard(w) {
-  if (!w) return '';
-  const st = classify(w);
-  const sess = w.session || {};
-  const week = w.weekly || {};
-  const month = w.monthly || {};
-  const plan = w.plan_label || 'Go';
-  let badge;
-  if (w.status === 'manual') {
-    badge = '<span class="badge warn">manual</span>';
-  } else if (!w.ok) {
-    badge = '<span class="badge bad">error</span>';
-  } else {
-    badge = '<span class="badge ' + (st === 'critical' ? 'bad' : st === 'warn' ? 'warn' : 'ok') + '">' + escapeHtml(plan) + '</span>';
-  }
-
-  function usdLimitRow(label, lim) {
-    if (!lim || (lim.remaining_percent == null && lim.remaining_usd == null)) {
-      return '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val muted">—</span></div></div>';
-    }
-    const remPct = lim.remaining_percent;
-    const remUsd = lim.remaining_usd;
-    const cap = lim.cap;
-    const headline = remUsd != null ? ('$' + money(remUsd)) : (remPct != null ? (remPct + '%') : '—');
-    const cls = remPct == null ? 'ok' : (remPct <= 0 ? 'bad' : remPct <= 40 ? 'warn' : 'ok');
-    const width = remPct == null ? 0 : Math.max(0, Math.min(100, remPct));
-    const resetRel = lim.next_reset_at ? fmtRelative(lim.next_reset_at) : '';
-    const resetLine = lim.next_reset_at
-      ? ('сброс ' + fmtDateShort(lim.next_reset_at) + (resetRel ? ' · ' + resetRel : ''))
-      : '';
-    const usedLine = (lim.used_usd != null && cap != null)
-      ? ('used $' + money(lim.used_usd) + ' / $' + money(cap))
-      : (remPct != null ? ('осталось ' + remPct + '%') : '');
-    return '<div class="limit-row">' +
-      '<div class="limit-row-head"><span class="limit-label">' + label + '</span><span class="limit-val ' + (cls === 'bad' ? 'bad-text' : cls === 'warn' ? 'warn-text' : '') + '">' + headline + '</span></div>' +
-      (remPct != null ? '<div class="bar ' + cls + '"><span style="width:' + width + '%"></span></div>' : '') +
-      (usedLine ? '<div class="bar-sub">' + usedLine + '</div>' : '') +
-      (resetLine ? '<div class="bar-sub">' + resetLine + '</div>' : '') +
-    '</div>';
-  }
-
-  const cardId = 'opencode-go-card';
-  const details =
-    '<div class="details-body">' +
-      '<div class="details-section">План</div>' +
-      '<div class="details-row"><span>label</span><span>' + escapeHtml(String(plan)) + '</span></div>' +
-      '<div class="details-row"><span>опубликовано</span><span class="muted">$12 / 5ч · $30 / нед · $60 / мес</span></div>' +
-      (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
-      renderSpendDetails(w) +
-      renderModelsBlock(w.models) +
-      '<div class="details-src">источник: GET /zen/go/v1/usage (percent = used)</div>' +
-      (w.error ? '<div class="details-src ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>' : '') +
-    '</div>';
-
-  const errLine = (!w.ok && w.error)
-    ? '<div class="bar-sub ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>'
-    : '';
-
-  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
-    '<div class="pcard-head"><span class="pcard-title">OpenCode · Go</span>' + badge + '</div>' +
-    usdLimitRow('короткий (5ч)', sess) +
-    usdLimitRow('недельный', week) +
-    usdLimitRow('месяц', month) +
-    renderSpendCompact(w) +
-    errLine +
-    details +
-    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
-  '</div>';
+  return renderProviderCard(w, {
+    id: 'opencode-go-card', prov: 'opencode-go', title: 'OpenCode · Go',
+    windows: [
+      { key: 'session', label: 'короткий', window: '5ч' },
+      { key: 'weekly', label: 'неделя', window: 'неделя' },
+      { key: 'monthly', label: 'месяц', window: 'месяц' },
+    ],
+    details: function(card) {
+      return detailsSimple(card,
+        '<div class="details-section">План</div><div class="details-row"><span>label</span><span>' + escapeHtml(String(card.plan_label || 'Go')) + '</span></div>' +
+        '<div class="details-row"><span>опубликовано</span><span class="muted">$12 / 5ч · $30 / нед · $60 / мес</span></div>',
+        'GET /zen/go/v1/usage (percent = used)');
+    },
+  });
+}
+function renderDeepseekCard(w) {
+  return renderProviderCard(w, {
+    id: 'deepseek-card', prov: 'deepseek', title: 'DeepSeek · баланс',
+    windows: [],
+    details: detailsDeepseek,
+  });
+}
+function renderOpenrouterCard(w) {
+  return renderProviderCard(w, {
+    id: 'openrouter-card', prov: 'openrouter', title: 'OpenRouter · credits',
+    windows: [],
+    creditsBar: true,
+    details: detailsOpenrouter,
+  });
 }
 
-/* ── Stats row ── */
+function tokenSum(row) {
+  return Number(row.prompt_tokens || 0) + Number(row.completion_tokens || 0) + Number(row.reasoning_tokens || 0);
+}
+
+function renderModelsSection(orWallet) {
+  const m = (orWallet && orWallet.models) || {};
+  if (!m.available) {
+    return '<div class="table-wrap"><div class="models-note">' + escapeHtml(m.reason || NO_MODEL_BREAKDOWN) + '</div></div>';
+  }
+  const items = m.items || [];
+  if (!items.length) {
+    return '<div class="table-wrap"><div class="models-note">нет данных за период</div></div>';
+  }
+  let html = '<div class="table-wrap"><table class="models"><thead><tr>' +
+    '<th>модель</th><th class="num">spend</th><th class="num">req</th><th class="num">tokens</th>' +
+    '</tr></thead><tbody>';
+  items.forEach(function(it) {
+    html += '<tr><td class="model">' + escapeHtml(it.model || '?') + '</td>' +
+      '<td class="num">$' + money(it.usage) + '</td>' +
+      '<td class="num">' + fmt(it.requests) + '</td>' +
+      '<td class="num">' + fmt(tokenSum(it)) + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  if (m.partial) html += '<div class="bar-sub" style="margin-top:8px">UTC-дни · GET /api/v1/activity · частичные сутки</div>';
+  return html;
+}
+
 function renderStats(data) {
   const wallets = data.wallets || {};
   const allItems = [];
@@ -792,19 +744,15 @@ function renderStats(data) {
     else if (st === 'warn' || st === 'critical') attention++;
   });
 
-  // Spend 24h: DeepSeek + OpenRouter
   let spendParts = [];
-  const ds = wallets.deepseek || {};
-  const dsSpend = ds.spend_24h || {};
+  const dsSpend = (wallets.deepseek || {}).spend_24h || {};
   if (dsSpend.spent != null) {
     const dsVal = typeof dsSpend.spent === 'object' ? (dsSpend.spent.CNY != null ? Number(dsSpend.spent.CNY) : null) : Number(dsSpend.spent);
     if (dsVal != null) spendParts.push('¥' + money(Math.abs(dsVal)));
   }
-  const or = wallets.openrouter || {};
-  const orSpend = or.spend_24h || {};
+  const orSpend = (wallets.openrouter || {}).spend_24h || {};
   if (orSpend.spent != null) spendParts.push('$' + money(orSpend.spent));
   const spendStr = spendParts.length ? spendParts.join(' + ') : '—';
-
   const attSub = attention > 0 ? (attention + ' лимит') : 'всё нормально';
   const statClass = attention > 0 ? 'critical' : '';
 
@@ -815,7 +763,6 @@ function renderStats(data) {
     '<div class="stat-card"><div class="stat-k">Источники</div><div class="stat-v">' + live + ' / ' + allItems.length + '</div><div class="stat-sub">DeepSeek · OpenRouter · Z.AI · Command Code · Kimi · OpenCode Go</div></div>';
 }
 
-/* ── Load / Refresh ── */
 async function refresh() {
   try { await fetch('/api/refresh', { method: 'POST' }); } catch(e) {}
   await load();
@@ -856,6 +803,7 @@ async function load() {
       renderOpenrouterCard(wallets.openrouter),
     ].filter(Boolean).join('');
     document.getElementById('providers').innerHTML = providerCards || '<div class="muted">Нет данных</div>';
+    document.getElementById('models').innerHTML = renderModelsSection(wallets.openrouter);
     applyExpandedIds(expanded);
   } catch(e) {
     document.getElementById('errors').innerHTML = '<div class="err">Ошибка загрузки: ' + escapeHtml(e.message) + '</div>';
