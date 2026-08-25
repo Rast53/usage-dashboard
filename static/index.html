@@ -306,6 +306,62 @@ function classify(item) {
   return 'ok';
 }
 
+const NO_MODEL_BREAKDOWN = 'нет разбивки от провайдера';
+
+function spendText(spend) {
+  if (!spend) return 'недостаточно истории';
+  if (spend.spent_summary) return String(spend.spent_summary);
+  if (spend.spent == null) return 'недостаточно истории';
+  if (typeof spend.spent === 'object') {
+    const cny = spend.spent.CNY != null ? Number(spend.spent.CNY) : null;
+    if (cny != null) return '¥' + money(Math.abs(cny));
+    const usd = spend.spent.USD != null ? Number(spend.spent.USD) : null;
+    if (usd != null) return '$' + money(Math.abs(usd));
+  }
+  return String(spend.spent);
+}
+
+function renderSpendCompact(w) {
+  const s24 = w.spend_24h || {};
+  const s7 = w.spend_7d || {};
+  const t24 = spendText(s24);
+  const t7 = spendText(s7);
+  const meta = [];
+  if (s24.baseline_at) meta.push('24ч база ' + fmtDateShort(s24.baseline_at) + (s24.partial ? ' · partial' : ''));
+  if (s7.baseline_at) meta.push('7д база ' + fmtDateShort(s7.baseline_at) + (s7.partial ? ' · partial' : ''));
+  return '<div class="limit-row" style="margin-top:8px"><div class="limit-row-head"><span class="limit-label">расход 24ч</span><span class="limit-val">' + escapeHtml(t24) + '</span></div></div>' +
+    '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">расход 7д</span><span class="limit-val">' + escapeHtml(t7) + '</span></div></div>' +
+    (meta.length ? '<div class="bar-sub">' + escapeHtml(meta.join(' · ')) + '</div>' : '');
+}
+
+function renderSpendDetails(w) {
+  const s24 = w.spend_24h || {};
+  const s7 = w.spend_7d || {};
+  return '<div class="details-section">Расход (snapshots)</div>' +
+    '<div class="details-row"><span>24ч</span><span><b>' + escapeHtml(spendText(s24)) + '</b>' + (s24.partial ? ' <span class="warn-text">partial</span>' : '') + '</span></div>' +
+    '<div class="details-row"><span>7д</span><span><b>' + escapeHtml(spendText(s7)) + '</b>' + (s7.partial ? ' <span class="warn-text">partial</span>' : '') + '</span></div>';
+}
+
+function renderModelsBlock(models) {
+  const m = models || {};
+  let html = '<div class="details-section">По моделям</div>';
+  if (!m.available) {
+    html += '<div class="details-row"><span class="muted">' + escapeHtml(m.reason || NO_MODEL_BREAKDOWN) + '</span></div>';
+    if (m.detail) html += '<div class="details-src muted">' + escapeHtml(String(m.detail)) + '</div>';
+    return html;
+  }
+  const items7 = m.items || [];
+  if (!items7.length) {
+    html += '<div class="details-row"><span class="muted">нет данных за период</span></div>';
+    return html;
+  }
+  html += '<div class="details-src">7д · GET /api/v1/activity' + (m.partial ? ' · UTC-дни, partial' : '') + '</div>';
+  items7.slice(0, 8).forEach(function(it) {
+    html += '<div class="details-row"><span>' + escapeHtml(it.model || '?') + '</span><span>$' + money(it.usage) + (it.requests != null ? ' · ' + it.requests + ' req' : '') + '</span></div>';
+  });
+  return html;
+}
+
 /* ── Toggle details ── */
 function toggleDetails(id) {
   const el = document.getElementById(id);
@@ -379,6 +435,8 @@ function renderZaiCard(w) {
         'mcp: ' + exactVal(mcpLimRaw) + '<br>' +
         (sessLim.summary ? ('summary: ' + escapeHtml(sessLim.summary)) : '') +
       '</div>' +
+      renderSpendDetails(w) +
+      renderModelsBlock(w.models) +
       '<div class="details-src">источник: /api/monitor/usage/quota/limit</div>' +
       (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '') +
     '</div>';
@@ -388,6 +446,7 @@ function renderZaiCard(w) {
     limitRow('короткий (5ч)', sess) +
     limitRow('недельный', week) +
     '<div class="bar-sub">MCP ' + escapeHtml(String(mcpCur)) + '/' + escapeHtml(String(mcpLim)) + '</div>' +
+    renderSpendCompact(w) +
     details +
     '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
   '</div>';
@@ -406,21 +465,6 @@ function renderDeepseekCard(w) {
   const avail = w.is_available ? '<span class="ok-text">available</span>' : '<span class="bad-text">unavailable</span>';
   const badge = w.ok ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERR</span>';
 
-  const spend = w.spend_24h || {};
-  // spend.spent can be a number (OpenRouter) or an object {CNY, USD} (DeepSeek)
-  let spent;
-  if (spend.spent != null) {
-    if (typeof spend.spent === 'object') {
-      const cnySpent = spend.spent.CNY != null ? Number(spend.spent.CNY) : null;
-      spent = cnySpent != null ? ('¥' + money(Math.abs(cnySpent))) : (spend.spent_summary || '—');
-    } else {
-      spent = '¥' + money(spend.spent);
-    }
-  } else {
-    spent = spend.spent_summary || '—';
-  }
-  const baseAt = spend.baseline_at ? ('база ' + fmtDateShort(spend.baseline_at)) : '';
-
   const cardId = 'deepseek-card';
 
   // Details
@@ -435,10 +479,8 @@ function renderDeepseekCard(w) {
     '<div class="details-body">' +
       '<div class="details-section">Балансы</div>' +
       (balDetails || '<div class="details-row muted">нет данных</div>') +
-      '<div class="details-section">Расход 24ч</div>' +
-      '<div class="details-row"><span>потрачено</span><span><b>' + escapeHtml(String(spent)) + '</b></span></div>' +
-      (baseAt ? '<div class="details-row"><span>baseline</span><span class="muted">' + baseAt + '</span></div>' : '') +
-      (spend.partial ? '<div class="details-row"><span>статус</span><span class="warn-text">partial</span></div>' : '') +
+      renderSpendDetails(w) +
+      renderModelsBlock(w.models) +
       '<div class="details-section">Статус</div>' +
       '<div class="details-row"><span>доступен</span><span>' + avail + '</span></div>' +
       (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
@@ -450,8 +492,7 @@ function renderDeepseekCard(w) {
     '<div class="pcard-head"><span class="pcard-title">DeepSeek · баланс</span>' + badge + '</div>' +
     '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">баланс</span><span class="limit-val">' + mainBal + '</span></div></div>' +
     (cny.topped_up_balance != null ? '<div class="bar-sub">topped ¥' + Number(cny.topped_up_balance).toFixed(2) + '</div>' : '') +
-    '<div class="limit-row" style="margin-top:8px"><div class="limit-row-head"><span class="limit-label">расход 24ч</span><span class="limit-val">' + escapeHtml(String(spent)) + '</span></div></div>' +
-    (baseAt ? '<div class="bar-sub">' + baseAt + (spend.partial ? ' · partial' : '') + '</div>' : '') +
+    renderSpendCompact(w) +
     details +
     '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
   '</div>';
@@ -465,8 +506,6 @@ function renderOpenrouterCard(w) {
   const mainBal = (rem != null) ? ('$' + money(rem)) : '—';
   const badge = w.ok ? '<span class="badge ok">OK</span>' : '<span class="badge bad">ERR</span>';
 
-  const spend = w.spend_24h || {};
-  const spent = w.spent_summary || spend.spent_summary || '—';
   const daily = w.usage_daily;
   const weekly = w.usage_weekly;
   const monthly = w.usage_monthly;
@@ -498,14 +537,15 @@ function renderOpenrouterCard(w) {
       '<div class="details-row"><span>остаток</span><span><b>$' + money(rem) + '</b></span></div>' +
       '<div class="details-row"><span>использовано</span><span class="muted">$' + money(used) + ' / $' + money(total) + '</span></div>' +
       '<div class="details-section">Расход</div>' +
-      '<div class="details-row"><span>24ч (snapshots)</span><span>' + escapeHtml(String(spent)) + '</span></div>' +
+      '<div class="details-row"><span>24ч (snapshots)</span><span>' + escapeHtml(spendText(w.spend_24h || {})) + '</span></div>' +
+      '<div class="details-row"><span>7д (snapshots)</span><span>' + escapeHtml(spendText(w.spend_7d || {})) + '</span></div>' +
       '<div class="details-row"><span>сегодня (all keys)</span><span>$' + money(dailyAll) + '</span></div>' +
       '<div class="details-row"><span>сегодня (this key)</span><span>$' + money(daily) + '</span></div>' +
-      '<div class="details-row"><span>неделя</span><span>$' + money(weekly) + '</span></div>' +
-      '<div class="details-row"><span>месяц</span><span>$' + money(monthly) + '</span></div>' +
-      (spend.baseline_at ? '<div class="details-row"><span>baseline</span><span class="muted">' + fmtDateShort(spend.baseline_at) + (spend.partial ? ' · partial' : '') + '</span></div>' : '') +
+      '<div class="details-row"><span>неделя (key API)</span><span>$' + money(weekly) + '</span></div>' +
+      '<div class="details-row"><span>месяц (key API)</span><span>$' + money(monthly) + '</span></div>' +
       (keysHtml ? '<div class="details-section">Ключи</div>' + keysHtml : '') +
-      '<div class="details-src">источник: /api/v1/credits + /api/v1/key</div>' +
+      renderModelsBlock(w.models) +
+      '<div class="details-src">источник: /api/v1/credits + /api/v1/key + /api/v1/activity</div>' +
       (w.error ? '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>' : '') +
     '</div>';
 
@@ -514,7 +554,7 @@ function renderOpenrouterCard(w) {
     '<div class="limit-row"><div class="limit-row-head"><span class="limit-label">остаток</span><span class="limit-val">' + mainBal + '</span></div></div>' +
     (used != null && total != null ? '<div class="bar-sub">used $' + money(used) + ' / $' + money(total) + '</div>' : '') +
     progressBar +
-    '<div class="limit-row" style="margin-top:8px"><div class="limit-row-head"><span class="limit-label">расход 24ч</span><span class="limit-val">' + escapeHtml(String(spent)) + '</span></div></div>' +
+    renderSpendCompact(w) +
     '<div class="bar-sub">week $' + money(weekly) + ' · month $' + money(monthly) + '</div>' +
     details +
     '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
@@ -572,6 +612,8 @@ function renderCommandcodeCard(w) {
       '<div class="details-row"><span>planId</span><span class="muted">' + escapeHtml(String(w.plan_id || '—')) + '</span></div>' +
       '<div class="details-row"><span>top-up</span><span>' + purchased + '</span></div>' +
       (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
+      renderSpendDetails(w) +
+      renderModelsBlock(w.models) +
       '<div class="details-src">источник: /alpha/billing/credits (+ optional /subscriptions)</div>' +
       (w.error ? '<div class="details-src ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>' : '') +
     '</div>';
@@ -585,6 +627,7 @@ function renderCommandcodeCard(w) {
     usdLimitRow('короткий (5ч)', sess) +
     usdLimitRow('недельный', week) +
     usdLimitRow('месяц', month) +
+    renderSpendCompact(w) +
     errLine +
     details +
     '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
@@ -638,6 +681,8 @@ function renderKimiCard(w) {
       '<div class="details-section">План</div>' +
       '<div class="details-row"><span>label</span><span>' + escapeHtml(String(plan)) + '</span></div>' +
       (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
+      renderSpendDetails(w) +
+      renderModelsBlock(w.models) +
       '<div class="details-src">источник: GET /coding/v1/usages</div>' +
       (w.error ? '<div class="details-src ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>' : '') +
     '</div>';
@@ -650,6 +695,7 @@ function renderKimiCard(w) {
     '<div class="pcard-head"><span class="pcard-title">Kimi · Coding</span>' + badge + '</div>' +
     pctLimitRow('короткий (5ч)', sess) +
     pctLimitRow('недельный', week) +
+    renderSpendCompact(w) +
     errLine +
     details +
     '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
@@ -705,6 +751,8 @@ function renderOpencodeGoCard(w) {
       '<div class="details-row"><span>label</span><span>' + escapeHtml(String(plan)) + '</span></div>' +
       '<div class="details-row"><span>опубликовано</span><span class="muted">$12 / 5ч · $30 / нед · $60 / мес</span></div>' +
       (w.remaining_summary ? '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>' : '') +
+      renderSpendDetails(w) +
+      renderModelsBlock(w.models) +
       '<div class="details-src">источник: GET /zen/go/v1/usage (percent = used)</div>' +
       (w.error ? '<div class="details-src ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>' : '') +
     '</div>';
@@ -718,6 +766,7 @@ function renderOpencodeGoCard(w) {
     usdLimitRow('короткий (5ч)', sess) +
     usdLimitRow('недельный', week) +
     usdLimitRow('месяц', month) +
+    renderSpendCompact(w) +
     errLine +
     details +
     '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
@@ -760,7 +809,7 @@ function renderStats(data) {
   const statClass = attention > 0 ? 'critical' : '';
 
   document.getElementById('stats').innerHTML =
-    '<div class="stat-card"><div class="stat-k">Расход 24ч</div><div class="stat-v">' + spendStr + '</div><div class="stat-sub">DeepSeek + OpenRouter</div></div>' +
+    '<div class="stat-card"><div class="stat-k">Расход 24ч</div><div class="stat-v">' + spendStr + '</div><div class="stat-sub">DeepSeek + OpenRouter · 7д на карточках</div></div>' +
     '<div class="stat-card"><div class="stat-k">Активных</div><div class="stat-v ok-text">' + active + '</div><div class="stat-sub">из ' + allItems.length + ' провайдеров</div></div>' +
     '<div class="stat-card ' + statClass + '"><div class="stat-k">Требует внимания</div><div class="stat-v ' + (attention > 0 ? 'bad-text' : '') + '">' + attention + '</div><div class="stat-sub">' + attSub + '</div></div>' +
     '<div class="stat-card"><div class="stat-k">Источники</div><div class="stat-v">' + live + ' / ' + allItems.length + '</div><div class="stat-sub">DeepSeek · OpenRouter · Z.AI · Command Code · Kimi · OpenCode Go</div></div>';
