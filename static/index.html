@@ -122,21 +122,6 @@
   .bar.bad > span { background: linear-gradient(90deg, #f85149, #ff7b72); }
   .bar-sub { font-size: 11px; color: var(--muted); }
 
-  /* Sparkline */
-  .spark { display: flex; align-items: flex-end; gap: 2px; height: 28px; }
-  .spark i {
-    display: block; width: 4px; border-radius: 2px 2px 0 0;
-    background: #3d4f66; min-height: 2px;
-  }
-  .spark i.fail { background: var(--red); }
-  .spark i.peak { background: var(--accent); }
-
-  /* Model chips */
-  .model-chip {
-    display: inline-block; background: var(--chip); border: 1px solid var(--border);
-    border-radius: 999px; padding: 2px 8px; margin: 0 4px 4px 0; font-size: 11px; color: #b7c6d8;
-  }
-
   /* Details toggle */
   .details-toggle {
     font-size: 11px; color: var(--accent); cursor: pointer; margin-top: 10px;
@@ -188,9 +173,6 @@
 
     <div class="section-label">Провайдеры</div>
     <div class="card-grid" id="providers"></div>
-
-    <div class="section-label">Аккаунты xAI / Codex</div>
-    <div class="card-grid" id="accounts"></div>
   </div>
 
 <script>
@@ -242,20 +224,6 @@ function escapeHtml(s) {
 
 /* ── Classify: returns 'critical' | 'warn' | 'ok' ── */
 function classify(item) {
-  // CPA account
-  if (item.provider && item.provider !== 'zai' && item.provider !== 'deepseek' && item.provider !== 'openrouter') {
-    const q = item.quota || {};
-    const credits = q.credits || {};
-    if (item.status === 'orphan-usage') return 'warn';
-    if (item.unavailable || q.team_blocked || (credits.used_percent != null && credits.used_percent >= 100)) {
-      return 'critical';
-    }
-    const rem = credits.remaining_percent;
-    if (rem != null && rem <= 40) return 'warn';
-    // Active billing window without percent: still healthy, but not fully known
-    if (rem == null && q.ok && (credits.period_end || q.reset_summary)) return 'ok';
-    return 'ok';
-  }
   // Z.AI wallet
   if (item.provider === 'zai' || item.kind === 'coding-quota') {
     if (!item.ok) return 'critical';
@@ -292,21 +260,6 @@ function classify(item) {
     return 'ok';
   }
   return 'ok';
-}
-
-/* ── Sparkline ── */
-function sparkline(arr) {
-  if (!arr || !arr.length) return '<span class="muted">—</span>';
-  const vals = arr.map(function(x) { return Number(x.success || 0) + Number(x.failed || 0); });
-  const max = Math.max(1, ...vals);
-  const last = vals.length - 1;
-  return '<div class="spark">' + arr.slice(-24).map(function(x, i) {
-    const total = Number(x.success || 0) + Number(x.failed || 0);
-    const h = Math.max(2, Math.round(28 * total / max));
-    const cls = (x.failed || 0) > 0 ? 'fail' : (i === last ? 'peak' : '');
-    const title = (x.time || '') + ': ok ' + (x.success || 0) + ', fail ' + (x.failed || 0);
-    return '<i class="' + cls + '" style="height:' + h + 'px" title="' + escapeHtml(title) + '"></i>';
-  }).join('') + '</div>';
 }
 
 /* ── Toggle details ── */
@@ -524,172 +477,20 @@ function renderOpenrouterCard(w) {
   '</div>';
 }
 
-/* ── CPA account card ── */
-function renderAccountCard(a) {
-  const st = classify(a);
-  const q = a.quota || {};
-  const credits = q.credits || {};
-  const isBlocked = a.unavailable || q.team_blocked || (credits.used_percent != null && credits.used_percent >= 100);
-
-  // Status text
-  let statusText, statusCls;
-  if (isBlocked) {
-    statusText = 'заблокирован';
-    statusCls = 'bad-text';
-  } else if (a.disabled) {
-    statusText = 'отключён';
-    statusCls = 'muted';
-  } else if (a.unavailable) {
-    statusText = 'недоступен';
-    statusCls = 'bad-text';
-  } else if (a.status === 'active') {
-    statusText = 'активен';
-    statusCls = 'ok-text';
-  } else {
-    statusText = a.status || '?';
-    statusCls = 'muted';
-  }
-
-  // Blocked reason
-  function humanReason(q) {
-    const raw = String(q.blocked_reason || '').toLowerCase();
-    if (!raw) return '';
-    if (raw.includes('credit pool exhausted') || raw.includes('100%')) return 'пул кредитов исчерпан';
-    if (raw.includes('spending-limit') || raw.includes('run out of credits')) return 'лимит трат / кредиты кончились';
-    if (raw.includes('team_blocked')) return 'team blocked';
-    return '';
-  }
-  const reason = humanReason(q);
-
-  // Percentage badge
-  let badge;
-  if (isBlocked) {
-    badge = '<span class="badge bad">0%</span>';
-  } else if (credits.remaining_percent != null) {
-    const rem = credits.remaining_percent;
-    const bCls = rem <= 40 ? 'warn' : 'ok';
-    badge = '<span class="badge ' + bCls + '">' + rem + '%</span>';
-  } else if (a.status === 'orphan-usage') {
-    badge = '<span class="badge warn">orphan</span>';
-  } else if (q.ok && (credits.period_end || q.reset_summary)) {
-    // Some xAI accounts return billing period without percent fields
-    badge = '<span class="badge warn">n/a%</span>';
-  } else {
-    badge = '<span class="badge ok">OK</span>';
-  }
-
-  // Reset info
-  const resetAt = q.reset_summary || credits.period_end || a.next_retry_after;
-  const resetRel = resetAt ? fmtRelative(resetAt) : '';
-  let resetLine = '';
-  if (isBlocked && reason) {
-    resetLine = reason;
-  } else if (resetAt) {
-    resetLine = 'сброс ' + fmtDateShort(resetAt) + (resetRel ? ' · ' + resetRel : '');
-  } else if (a.status === 'orphan-usage') {
-    resetLine = 'нет auth-file в CPA';
-  } else if (q.remaining_summary) {
-    resetLine = q.remaining_summary;
-  }
-
-  // Progress bar
-  let progressBar = '';
-  if (credits.remaining_percent != null) {
-    const rem = credits.remaining_percent;
-    const cls = rem <= 0 ? 'bad' : rem <= 40 ? 'warn' : 'ok';
-    const width = Math.max(0, Math.min(100, rem));
-    progressBar = '<div class="bar ' + cls + '"><span style="width:' + width + '%"></span></div>';
-  }
-
-  // Title: email or name
-  const title = a.email || a.name || a.account_type || 'unknown';
-  const sub = [a.account_type || '', a.last_seen ? ('last ' + fmtDateShort(a.last_seen)) : ''].filter(Boolean).join(' · ');
-
-  // Models (chips, first 4)
-  let modelsHtml = '<span class="muted">—</span>';
-  if ((a.models || []).length) {
-    modelsHtml = (a.models || []).slice(0, 4).map(function(m) {
-      const ms = (a.model_stats || []).find(function(x){ return x.model === m; });
-      const chipTitle = ms ? (m + ': ' + ms.requests + ' req, ' + fmt(ms.tokens_total) + ' tok') : m;
-      return '<span class="model-chip" title="' + escapeHtml(chipTitle) + '">' + escapeHtml(m) + '</span>';
-    }).join('');
-  }
-
-  const cardId = 'acct-' + (a.email || a.name || Math.random().toString(36).slice(2)).replace(/[^a-zA-Z0-9]/g, '_');
-
-  // Details
-  const tokIn = a.tokens_in || 0;
-  const tokOut = a.tokens_out || 0;
-  const tokTotal = a.tokens_total || 0;
-
-  let modelStatsHtml = '';
-  (a.model_stats || []).slice(0, 8).forEach(function(ms) {
-    modelStatsHtml += '<div class="details-row"><span>' + escapeHtml(ms.model || '?') + '</span><span class="muted">' + (ms.requests || 0) + ' req · ' + fmt(ms.tokens_total) + ' tok</span></div>';
-  });
-
-  const details =
-    '<div class="details-body">' +
-      '<div class="details-section">Токены 24ч</div>' +
-      '<div class="details-row"><span>входящие</span><span><b>' + fmt(tokIn) + '</b></span></div>' +
-      '<div class="details-row"><span>исходящие</span><span><b>' + fmt(tokOut) + '</b></span></div>' +
-      '<div class="details-row"><span>всего</span><span><b>' + fmt(tokTotal) + '</b></span></div>' +
-      (a.reasoning_tokens ? '<div class="details-row"><span>reasoning</span><span class="muted">' + fmt(a.reasoning_tokens) + '</span></div>' : '') +
-      (a.cached_tokens ? '<div class="details-row"><span>cached</span><span class="muted">' + fmt(a.cached_tokens) + '</span></div>' : '') +
-      '<div class="details-section">Модели</div>' +
-      (modelStatsHtml || '<div class="details-row muted">нет данных</div>') +
-      '<div class="details-section">Запросы</div>' +
-      sparkline(a.recent_requests) +
-      '<div class="details-section">Квота</div>' +
-      '<div class="details-mono">' +
-        (credits.remaining_percent != null ? ('credits: ' + credits.remaining_percent + '% осталось') : 'credits: нет данных') + '<br>' +
-        (credits.period_end ? ('period end: ' + fmtDateShort(credits.period_end)) : '') +
-        (a.account_type ? ('<br>account type: ' + escapeHtml(a.account_type)) : '') +
-        (q.rate && q.rate.remaining_tokens != null ? ('<br>rate: ' + fmt(q.rate.remaining_tokens) + ' / ' + fmt(q.rate.limit_tokens) + ' tok') : '') +
-      '</div>' +
-      '<div class="details-src">источник: ' + escapeHtml(a.source || 'cpa+pg') + '</div>' +
-    '</div>';
-
-  return '<div class="pcard ' + st + '" id="' + cardId + '" data-expanded="false">' +
-    '<div class="pcard-head"><span class="pcard-title">' + escapeHtml(title) + '</span>' + badge + '</div>' +
-    '<div class="' + statusCls + '" style="font-size:13px;margin-bottom:4px">' + escapeHtml(statusText) + (resetLine ? ' · ' + escapeHtml(resetLine) : '') + '</div>' +
-    progressBar +
-    '<div class="bar-sub">' + fmt(a.success) + ' req ok · ' + fmt(a.failed) + ' fail' + '</div>' +
-    (sub ? '<div class="bar-sub">' + escapeHtml(sub) + '</div>' : '') +
-    '<div style="margin-top:6px">' + modelsHtml + '</div>' +
-    details +
-    '<div class="details-toggle" onclick="toggleDetails(\'' + cardId + '\')"></div>' +
-  '</div>';
-}
-
 /* ── Stats row ── */
 function renderStats(data) {
-  const accounts = (data.accounts || []).filter(function(a) {
-    return a.provider !== 'deepseek' && a.provider !== 'openrouter' && a.provider !== 'zai';
-  });
   const wallets = data.wallets || {};
-  const allItems = accounts.slice();
+  const allItems = [];
   if (wallets.zai) allItems.push(wallets.zai);
   if (wallets.deepseek) allItems.push(wallets.deepseek);
   if (wallets.openrouter) allItems.push(wallets.openrouter);
 
-  let active = 0, attention = 0, blocked = 0;
+  let active = 0, attention = 0, live = 0;
   allItems.forEach(function(item) {
     const st = classify(item);
+    if (item.ok) live++;
     if (st === 'ok') active++;
-    else if (st === 'warn') attention++;
-    else if (st === 'critical') {
-      attention++;
-      // Only count as "blocked" for CPA accounts (not wallets)
-      var q = item.quota || {};
-      var credits = q.credits || {};
-      if (item.unavailable || q.team_blocked || (credits.used_percent != null && credits.used_percent >= 100)) {
-        blocked++;
-      }
-    }
-  });
-  let tokens = 0;
-  accounts.forEach(function(a) {
-    if (a.tokens_total) tokens += a.tokens_total;
+    else if (st === 'warn' || st === 'critical') attention++;
   });
 
   // Spend 24h: DeepSeek + OpenRouter
@@ -705,17 +506,14 @@ function renderStats(data) {
   if (orSpend.spent != null) spendParts.push('$' + money(orSpend.spent));
   const spendStr = spendParts.length ? spendParts.join(' + ') : '—';
 
-  const attSub = blocked > 0
-    ? (blocked + ' заблокирован' + (attention > blocked ? ' · ' + (attention - blocked) + ' лимит' : ''))
-    : (attention > 0 ? attention + ' лимит' : 'всё нормально');
-
+  const attSub = attention > 0 ? (attention + ' лимит') : 'всё нормально';
   const statClass = attention > 0 ? 'critical' : '';
 
   document.getElementById('stats').innerHTML =
     '<div class="stat-card"><div class="stat-k">Расход 24ч</div><div class="stat-v">' + spendStr + '</div><div class="stat-sub">DeepSeek + OpenRouter</div></div>' +
     '<div class="stat-card"><div class="stat-k">Активных</div><div class="stat-v ok-text">' + active + '</div><div class="stat-sub">из ' + allItems.length + ' провайдеров</div></div>' +
     '<div class="stat-card ' + statClass + '"><div class="stat-k">Требует внимания</div><div class="stat-v ' + (attention > 0 ? 'bad-text' : '') + '">' + attention + '</div><div class="stat-sub">' + attSub + '</div></div>' +
-    '<div class="stat-card"><div class="stat-k">Токены 24ч</div><div class="stat-v">' + fmt(tokens) + '</div><div class="stat-sub">по CPA аккаунтам</div></div>';
+    '<div class="stat-card"><div class="stat-k">Источники</div><div class="stat-v">' + live + ' / ' + allItems.length + '</div><div class="stat-sub">DeepSeek · OpenRouter · Z.AI</div></div>';
 }
 
 /* ── Load / Refresh ── */
@@ -756,12 +554,6 @@ async function load() {
       renderOpenrouterCard(wallets.openrouter),
     ].filter(Boolean).join('');
     document.getElementById('providers').innerHTML = providerCards || '<div class="muted">Нет данных</div>';
-
-    const cpaAccounts = (data.accounts || []).filter(function(a) {
-      return a.provider !== 'deepseek' && a.provider !== 'openrouter' && a.provider !== 'zai'
-        && a.email !== 'deepseek-main' && a.email !== 'openrouter-main' && a.email !== 'zai-main';
-    });
-    document.getElementById('accounts').innerHTML = cpaAccounts.map(renderAccountCard).join('') || '<div class="muted">Нет аккаунтов</div>';
     applyExpandedIds(expanded);
   } catch(e) {
     document.getElementById('errors').innerHTML = '<div class="err">Ошибка загрузки: ' + escapeHtml(e.message) + '</div>';
