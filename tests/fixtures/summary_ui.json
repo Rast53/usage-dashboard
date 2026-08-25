@@ -1,0 +1,652 @@
+{
+  "updated_at": "2026-08-25T18:30:00Z",
+  "accounts": [],
+  "errors": [],
+  "wallets": {
+    "zai": {
+      "provider": "zai",
+      "ok": true,
+      "kind": "coding-quota",
+      "level": "pro",
+      "session": {
+        "remaining_percent": 32,
+        "used_percent": 68,
+        "next_reset_at": "2026-08-25T23:00:00Z"
+      },
+      "weekly": {
+        "remaining_percent": 71,
+        "used_percent": 29,
+        "currentValue": 100000,
+        "next_reset_at": "2026-08-31T00:00:00Z"
+      },
+      "mcp": {
+        "currentValue": 12,
+        "usage": 100,
+        "remaining": 88
+      },
+      "limits": [],
+      "spend_24h": {
+        "window_hours": 24,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-24T12:00:00Z",
+        "spent": 5000.0,
+        "spent_summary": "−5000.00 tok",
+        "note": "Z.AI weekly currentValue delta from local snapshots",
+        "current": 100000.0,
+        "unit": "tok",
+        "baseline": 95000.0
+      },
+      "spend_7d": {
+        "window_hours": 168,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-18T12:00:00Z",
+        "spent": 20000.0,
+        "spent_summary": "−20000.00 tok",
+        "note": "Z.AI weekly currentValue delta from local snapshots",
+        "current": 100000.0,
+        "unit": "tok",
+        "baseline": 80000.0
+      },
+      "spend_series_7d": {
+        "days": 8,
+        "partial": true,
+        "gap": null,
+        "unit": "tok",
+        "points": [
+          {
+            "date": "2026-08-18",
+            "spent": null,
+            "partial": true
+          },
+          {
+            "date": "2026-08-19",
+            "spent": 2500.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-20",
+            "spent": 2500.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-21",
+            "spent": 2500.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-22",
+            "spent": 2500.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-23",
+            "spent": 2500.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-24",
+            "spent": 2500.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-25",
+            "spent": 5000.0,
+            "partial": false
+          }
+        ],
+        "note": "Z.AI daily weekly.currentValue delta from local snapshots"
+      },
+      "models": {
+        "available": false,
+        "reason": "нет разбивки от провайдера",
+        "items": []
+      }
+    },
+    "commandcode": {
+      "provider": "commandcode",
+      "ok": true,
+      "kind": "commandcode-credits",
+      "status": "active",
+      "plan_id": "individual-goat",
+      "plan_label": "GOAT",
+      "monthly_credits": 53.2,
+      "monthly_allowance": 70.0,
+      "session": {
+        "remaining_percent": 55,
+        "remaining_usd": 7.7,
+        "cap": 14,
+        "used": 6.3,
+        "used_percent": 45
+      },
+      "weekly": {
+        "remaining_percent": 40,
+        "remaining_usd": 14.0,
+        "cap": 35,
+        "used": 21.0,
+        "used_percent": 60
+      },
+      "monthly": {
+        "remaining_percent": 76,
+        "remaining_usd": 53.2,
+        "cap": 70,
+        "used": 16.8,
+        "used_percent": 24
+      },
+      "spend_24h": {
+        "window_hours": 24,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-24T12:00:00Z",
+        "spent": 2.2,
+        "spent_summary": "−$2.20",
+        "note": "Command Code monthly remaining credits delta from local snapshots",
+        "current": 53.2,
+        "unit": "$",
+        "baseline": 55.4
+      },
+      "spend_7d": {
+        "window_hours": 168,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-18T12:00:00Z",
+        "spent": 8.8,
+        "spent_summary": "−$8.80",
+        "note": "Command Code monthly remaining credits delta from local snapshots",
+        "current": 53.2,
+        "unit": "$",
+        "baseline": 62.0
+      },
+      "spend_series_7d": {
+        "days": 8,
+        "partial": true,
+        "gap": null,
+        "unit": "$",
+        "points": [
+          {
+            "date": "2026-08-18",
+            "spent": null,
+            "partial": true
+          },
+          {
+            "date": "2026-08-19",
+            "spent": 1.1,
+            "partial": false
+          },
+          {
+            "date": "2026-08-20",
+            "spent": 1.1,
+            "partial": false
+          },
+          {
+            "date": "2026-08-21",
+            "spent": 1.1,
+            "partial": false
+          },
+          {
+            "date": "2026-08-22",
+            "spent": 1.1,
+            "partial": false
+          },
+          {
+            "date": "2026-08-23",
+            "spent": 1.1,
+            "partial": false
+          },
+          {
+            "date": "2026-08-24",
+            "spent": 1.1,
+            "partial": false
+          },
+          {
+            "date": "2026-08-25",
+            "spent": 2.2,
+            "partial": false
+          }
+        ],
+        "note": "Command Code daily monthly remaining delta from local snapshots"
+      },
+      "models": {
+        "available": false,
+        "reason": "нет разбивки от провайдера",
+        "items": []
+      }
+    },
+    "kimi": {
+      "provider": "kimi",
+      "ok": true,
+      "kind": "kimi-coding-quota",
+      "status": "active",
+      "plan_label": "Moderato",
+      "session": {
+        "remaining_percent": 18,
+        "cap": 200,
+        "used": 164,
+        "used_percent": 82,
+        "next_reset_at": "2026-08-25T21:10:00Z"
+      },
+      "weekly": {
+        "remaining_percent": 86.5,
+        "cap": 2048,
+        "used": 276,
+        "remaining": 1772,
+        "used_percent": 13.5
+      },
+      "spend_24h": {
+        "window_hours": 24,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-24T12:00:00Z",
+        "spent": 24.0,
+        "spent_summary": "−24.00 req",
+        "note": "Kimi weekly used delta from local snapshots",
+        "current": 276.0,
+        "unit": "req",
+        "baseline": 252.0
+      },
+      "spend_7d": {
+        "window_hours": 168,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-18T12:00:00Z",
+        "spent": 96.0,
+        "spent_summary": "−96.00 req",
+        "note": "Kimi weekly used delta from local snapshots",
+        "current": 276.0,
+        "unit": "req",
+        "baseline": 180.0
+      },
+      "spend_series_7d": {
+        "days": 8,
+        "partial": true,
+        "gap": null,
+        "unit": "req",
+        "points": [
+          {
+            "date": "2026-08-18",
+            "spent": null,
+            "partial": true
+          },
+          {
+            "date": "2026-08-19",
+            "spent": 12.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-20",
+            "spent": 12.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-21",
+            "spent": 12.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-22",
+            "spent": 12.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-23",
+            "spent": 12.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-24",
+            "spent": 12.0,
+            "partial": false
+          },
+          {
+            "date": "2026-08-25",
+            "spent": 24.0,
+            "partial": false
+          }
+        ],
+        "note": "Kimi daily weekly.used delta from local snapshots"
+      },
+      "models": {
+        "available": false,
+        "reason": "нет разбивки от провайдера",
+        "items": []
+      }
+    },
+    "opencode-go": {
+      "provider": "opencode-go",
+      "ok": true,
+      "kind": "opencode-go-quota",
+      "status": "active",
+      "plan_label": "Go",
+      "session": {
+        "remaining_percent": 80.5,
+        "cap": 12,
+        "used_percent": 19.5,
+        "used_usd": 2.34,
+        "remaining_usd": 9.66
+      },
+      "weekly": {
+        "remaining_percent": 70.3,
+        "cap": 30,
+        "used_percent": 29.7,
+        "used_usd": 8.91,
+        "remaining_usd": 21.09
+      },
+      "monthly": {
+        "remaining_percent": 74.7,
+        "cap": 60,
+        "used_percent": 25.3,
+        "used_usd": 15.2,
+        "remaining_usd": 44.8,
+        "next_reset_at": "2026-09-11T14:30:00Z"
+      },
+      "spend_24h": {
+        "window_hours": 24,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-24T12:00:00Z",
+        "spent": 1.8,
+        "spent_summary": "−$1.80",
+        "note": "OpenCode Go monthly used_usd delta from local snapshots",
+        "current": 15.2,
+        "unit": "$",
+        "baseline": 13.4
+      },
+      "spend_7d": {
+        "window_hours": 168,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-18T12:00:00Z",
+        "spent": 7.2,
+        "spent_summary": "−$7.20",
+        "note": "OpenCode Go monthly used_usd delta from local snapshots",
+        "current": 15.2,
+        "unit": "$",
+        "baseline": 8.0
+      },
+      "spend_series_7d": {
+        "days": 8,
+        "partial": true,
+        "gap": null,
+        "unit": "$",
+        "points": [
+          {
+            "date": "2026-08-18",
+            "spent": null,
+            "partial": true
+          },
+          {
+            "date": "2026-08-19",
+            "spent": 0.9,
+            "partial": false
+          },
+          {
+            "date": "2026-08-20",
+            "spent": 0.9,
+            "partial": false
+          },
+          {
+            "date": "2026-08-21",
+            "spent": 0.9,
+            "partial": false
+          },
+          {
+            "date": "2026-08-22",
+            "spent": 0.9,
+            "partial": false
+          },
+          {
+            "date": "2026-08-23",
+            "spent": 0.9,
+            "partial": false
+          },
+          {
+            "date": "2026-08-24",
+            "spent": 0.9,
+            "partial": false
+          },
+          {
+            "date": "2026-08-25",
+            "spent": 1.8,
+            "partial": false
+          }
+        ],
+        "note": "OpenCode Go daily monthly.used_usd delta from local snapshots"
+      },
+      "models": {
+        "available": false,
+        "reason": "нет разбивки от провайдера",
+        "items": []
+      }
+    },
+    "deepseek": {
+      "provider": "deepseek",
+      "ok": true,
+      "kind": "wallet-balance",
+      "is_available": true,
+      "balance": [
+        {
+          "currency": "CNY",
+          "total_balance": "28.8",
+          "topped_up_balance": "50.0"
+        },
+        {
+          "currency": "USD",
+          "total_balance": "0.12"
+        }
+      ],
+      "spend_24h": {
+        "window_hours": 24,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-24T12:00:00Z",
+        "current": {
+          "CNY": 28.8
+        },
+        "baseline": {
+          "CNY": 31.6
+        },
+        "spent": {
+          "CNY": 2.8
+        },
+        "spent_summary": "−¥2.80",
+        "note": "24h spend estimated from local snapshots: baseline_balance - current_balance. DeepSeek API does not expose usage history."
+      },
+      "spend_7d": {
+        "window_hours": 168,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-18T12:00:00Z",
+        "current": {
+          "CNY": 28.8
+        },
+        "baseline": {
+          "CNY": 40.0
+        },
+        "spent": {
+          "CNY": 11.2
+        },
+        "spent_summary": "−¥11.20",
+        "note": "168h spend estimated from local snapshots: baseline_balance - current_balance. DeepSeek API does not expose usage history."
+      },
+      "spend_series_7d": {
+        "days": 8,
+        "partial": true,
+        "gap": null,
+        "unit": "¥",
+        "points": [
+          {
+            "date": "2026-08-18",
+            "spent": null,
+            "partial": true
+          },
+          {
+            "date": "2026-08-19",
+            "spent": 1.4,
+            "partial": false
+          },
+          {
+            "date": "2026-08-20",
+            "spent": 1.4,
+            "partial": false
+          },
+          {
+            "date": "2026-08-21",
+            "spent": 1.4,
+            "partial": false
+          },
+          {
+            "date": "2026-08-22",
+            "spent": 1.4,
+            "partial": false
+          },
+          {
+            "date": "2026-08-23",
+            "spent": 1.4,
+            "partial": false
+          },
+          {
+            "date": "2026-08-24",
+            "spent": 1.4,
+            "partial": false
+          },
+          {
+            "date": "2026-08-25",
+            "spent": 2.8,
+            "partial": false
+          }
+        ],
+        "note": "DeepSeek daily balance delta from local snapshots"
+      },
+      "models": {
+        "available": false,
+        "reason": "нет разбивки от провайдера",
+        "items": []
+      }
+    },
+    "openrouter": {
+      "provider": "openrouter",
+      "ok": true,
+      "kind": "wallet-credits",
+      "total_credits": 20.0,
+      "total_usage": 15.9,
+      "remaining": 4.1,
+      "usage_daily": 0.4,
+      "usage_weekly": 2.1,
+      "usage_monthly": 8.4,
+      "keys": [
+        {
+          "name": "hermes",
+          "usage_daily": 0.22
+        },
+        {
+          "name": "raops",
+          "usage_daily": 0.18
+        }
+      ],
+      "spend_24h": {
+        "window_hours": 24,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-24T12:00:00Z",
+        "baseline_total_usage": 14.9,
+        "current_total_usage": 15.9,
+        "spent": 1.0,
+        "spent_summary": "−$1.00",
+        "note": "rolling 24h spend from local snapshots of OpenRouter total_usage"
+      },
+      "spend_7d": {
+        "window_hours": 168,
+        "partial": false,
+        "gap": null,
+        "baseline_at": "2026-08-18T12:00:00Z",
+        "baseline_total_usage": 12.0,
+        "current_total_usage": 15.9,
+        "spent": 3.9,
+        "spent_summary": "−$3.90",
+        "note": "rolling 168h spend from local snapshots of OpenRouter total_usage"
+      },
+      "spend_series_7d": {
+        "days": 8,
+        "partial": true,
+        "gap": null,
+        "unit": "$",
+        "points": [
+          {
+            "date": "2026-08-18",
+            "spent": null,
+            "partial": true
+          },
+          {
+            "date": "2026-08-19",
+            "spent": 0.35,
+            "partial": false
+          },
+          {
+            "date": "2026-08-20",
+            "spent": 0.35,
+            "partial": false
+          },
+          {
+            "date": "2026-08-21",
+            "spent": 0.35,
+            "partial": false
+          },
+          {
+            "date": "2026-08-22",
+            "spent": 1.15,
+            "partial": false
+          },
+          {
+            "date": "2026-08-23",
+            "spent": null,
+            "partial": true,
+            "gap": "window-reset"
+          },
+          {
+            "date": "2026-08-24",
+            "spent": 1.15,
+            "partial": false
+          },
+          {
+            "date": "2026-08-25",
+            "spent": 1.0,
+            "partial": false
+          }
+        ],
+        "note": "OpenRouter daily total_usage delta from local snapshots"
+      },
+      "models": {
+        "available": true,
+        "endpoint": "/api/v1/activity",
+        "partial": true,
+        "items": [
+          {
+            "model": "anthropic/claude-sonnet-4",
+            "usage": 2.04,
+            "requests": 18,
+            "prompt_tokens": 42000,
+            "completion_tokens": 9100,
+            "reasoning_tokens": 1200
+          },
+          {
+            "model": "openai/gpt-4.1",
+            "usage": 0.86,
+            "requests": 41,
+            "prompt_tokens": 18000,
+            "completion_tokens": 6400,
+            "reasoning_tokens": 0
+          },
+          {
+            "model": "google/gemini-2.5-pro",
+            "usage": 0.31,
+            "requests": 9,
+            "prompt_tokens": 11000,
+            "completion_tokens": 2500,
+            "reasoning_tokens": 400
+          }
+        ]
+      }
+    }
+  }
+}
