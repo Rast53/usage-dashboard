@@ -23,6 +23,9 @@ services:
       - OPENROUTER_PROXY=${OPENROUTER_PROXY:-}
       - OPENROUTER_SSL_NO_VERIFY=${OPENROUTER_SSL_NO_VERIFY:-1}
       - ZAI_API_KEY=${ZAI_API_KEY:-}
+      # Direct docker egress to api.z.ai from tw-msk fails; HTTP CONNECT / SOCKS5(h).
+      # Userinfo is a secret — set ZAI_PROXY in Dockhand stack env (is_secret). Never commit.
+      - ZAI_PROXY=${ZAI_PROXY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
