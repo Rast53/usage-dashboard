@@ -2,8 +2,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# psycopg2 intentionally omitted: PG (cliproxyapi) decommissioned with aeza
-# (TASK-cliproxy-decommission); app.py tolerates missing psycopg2 with a warning.
+# Wallet probes only (DeepSeek / OpenRouter / Z.AI).
 # PySocks: optional SOCKS5(h) for OPENROUTER_PROXY (tw-msk socks-relay → London).
 RUN pip install --no-cache-dir fastapi "uvicorn[standard]" PySocks
 

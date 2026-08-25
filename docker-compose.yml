@@ -1,5 +1,5 @@
 # Dockhand autodeploy on tw-msk-server (local socket env).
-# CPA sources removed from config (TASK-cliproxy-decommission): no CPA_*, no USAGE_PG_DSN.
+# Wallet-only stack: DeepSeek / OpenRouter / Z.AI.
 # ${VARS} + secrets come from dockhand stack_environment_variables (DEEPSEEK_API_KEY редактируется через UI).
 services:
   usage-dashboard:

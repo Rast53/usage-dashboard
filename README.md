@@ -8,37 +8,35 @@ Live: **https://usage.ragpt.ru**
 
 Карточный дашборд (не таблица), человеческий язык, мобильная версия.
 
-- **Общая статистика сверху** — расход 24ч, активных, требует внимания, токены 24ч
+- **Общая статистика сверху** — расход 24ч, активных, требует внимания, живые источники
 - **Карточки провайдеров** — Z.AI (оба лимита: короткий 5ч + недельный), DeepSeek (баланс), OpenRouter (кредиты). Цветовая подсветка: 🔴 критично / 🟡 внимание / 🟢 нормально
-- **Карточки CPA-аккаунтов** (xAI/Grok + Codex) — статус, остаток %, прогресс-бар, req ok/fail, модели
-- **Детали по клику** — токены in/out, разбивка по моделям, спарклайны, точная квота, endpoint'ы. Жаргон — только в разворачиваемом блоке
+- **Детали по клику** — точные квоты, ключи OpenRouter, балансы DeepSeek. Жаргон — только в разворачиваемом блоке
 - **Автообновление** каждые 30с (с сохранением раскрытых карточек)
+
+Карточки xAI/Codex сняты: тот источник выведен из эксплуатации 2026-08-18.
 
 ## Architecture
 ```
-Browser → Caddy(usage.raclaw.ru)
+Browser → Traefik (usage.ragpt.ru)
        → FastAPI :3210
-          ├─ CPA /v0/management/auth-files
-          ├─ Postgres usage_records (cliproxyapi)
           ├─ DeepSeek API (balance)
-          ├─ OpenRouter API (credits)
+          ├─ OpenRouter API (credits) via London reverse-proxy / OPENROUTER_PROXY
           └─ Z.AI API (quota/limit)
 ```
 
 ## API
 - `GET /api/health` — статус
-- `GET /api/summary` — основной endpoint: accounts + wallets + errors
-- `GET /api/accounts` — CPA аккаунты
-- `GET /api/providers` — статистика по провайдерам
+- `GET /api/summary` — основной endpoint: wallets + errors
+- `GET /api/providers` — метаданные источников
 - `GET /api/wallets` — DeepSeek + OpenRouter + Z.AI
-- `GET /api/quota` — кеш квот (xAI probe)
-- `POST /api/refresh` — принудительный probe + обновление
+- `GET /api/quota` — кеш последних wallet-проб
+- `POST /api/refresh` — принудительное обновление проб
 
 ## Local run
 ```bash
-export CPA_BASE=http://127.0.0.1:8317
-export CPA_MGMT_TOKEN=openclaw
-export USAGE_PG_DSN='host=... dbname=cliproxyapi user=... password=...'
+export DEEPSEEK_API_KEY=...
+export OPENROUTER_API_KEY=...
+export ZAI_API_KEY=...
 export USAGE_PORT=3210
 export USAGE_STATIC_DIR=/path/to/static
 python3 app.py
@@ -51,18 +49,12 @@ Push to `main` → git webhook → build/recreate. Container `usage-dashboard-us
 
 Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY`). Do not commit keys.
 
-Data volume: `/opt/usage-dashboard/data` → `/app/data`.
+Data volume: `/opt/usage-dashboard/data` → `/app/data`. Historical `snapshots.jsonl` stays on the volume (24h spend); do not truncate it.
 
 ## License
 MIT
 
 ## Data sources
-
-### CPA аккаунты (xAI/Grok + Codex)
-- Auth status: CPA `/v0/management/auth-files`
-- Tokens/models: Postgres `usage_records` (24h window, durable)
-- Quota: xAI probe `GetGrokCreditsConfig` (SuperGrok/Build remaining% + reset)
-- Secondary: `/v1/me` team_blocked; chat rate-limit headers (RPM/TPM)
 
 ### DeepSeek
 - Balance: `GET https://api.deepseek.com/user/balance`
@@ -80,4 +72,4 @@ MIT
 - Quotas: `GET https://api.z.ai/api/monitor/usage/quota/limit`
 - Три лимита: короткий (5ч), недельный, MCP инструменты (месячный)
 - Карточка показывает оба процентных лимита сразу; MCP в разворачиваемых деталях
-- Key: `ZAI_API_KEY` in `/opt/usage-dashboard/env`
+- Key: `ZAI_API_KEY` in Dockhand stack env
