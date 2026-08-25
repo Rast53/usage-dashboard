@@ -34,6 +34,7 @@ POLL_SECONDS = int(os.environ.get("USAGE_POLL_SECONDS", "60"))
 QUOTA_PROBE_SECONDS = int(os.environ.get("USAGE_QUOTA_PROBE_SECONDS", "300"))
 USAGE_WINDOW_HOURS = int(os.environ.get("USAGE_WINDOW_HOURS", "24"))
 USAGE_WINDOW_7D_HOURS = 168
+SPEND_SERIES_DAYS = 8
 NO_MODEL_BREAKDOWN = "нет разбивки от провайдера"
 WALLET_PROBE_KEYS = (
     "deepseek-main",
@@ -247,6 +248,17 @@ def _empty_spend(window_hours: int, note: str, extra: dict[str, Any] | None = No
     if extra:
         out.update(extra)
     return out
+
+
+def _empty_spend_series(unit: str, note: str, days: int = SPEND_SERIES_DAYS) -> dict[str, Any]:
+    return {
+        "days": days,
+        "partial": True,
+        "gap": "no-history",
+        "unit": unit,
+        "points": [],
+        "note": note,
+    }
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -576,6 +588,7 @@ def build_deepseek_wallet(ds_quota: dict[str, Any] | None) -> dict[str, Any] | N
         "probed_at": ds_quota.get("probed_at"),
         "spend_24h": spend,
         "spend_7d": spend_7d,
+        "spend_series_7d": compute_deepseek_spend_series_7d(ds_quota.get("balance")),
         "models": models_unavailable("DeepSeek API has no per-model usage endpoint"),
         "source": "deepseek-balance-api+local-snapshots",
     }
@@ -963,6 +976,7 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
         "probed_at": or_probe.get("probed_at"),
         "spend_24h": spend,
         "spend_7d": spend_7d,
+        "spend_series_7d": compute_openrouter_spend_series_7d(or_probe.get("total_usage")),
         "spent_summary": spent_summary,
         "models": models,
         "source": "openrouter-credits-api+local-snapshots",
@@ -1213,6 +1227,7 @@ def build_zai_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
         "probed_at": probe.get("probed_at"),
         "spend_24h": compute_zai_spend(probe, USAGE_WINDOW_HOURS),
         "spend_7d": compute_zai_spend(probe, USAGE_WINDOW_7D_HOURS),
+        "spend_series_7d": compute_zai_spend_series_7d(probe),
         "models": models_unavailable("Z.AI quota/limit API has no per-model breakdown"),
         "source": "zai-monitor-quota-limit",
         "via": probe.get("via"),
@@ -1329,6 +1344,233 @@ def compute_quota_spend(
         "unit": unit,
     })
     return result
+
+
+def compute_spend_series_7d(
+    points: list[tuple[float, str, float]],
+    current: float | None,
+    *,
+    direction: str,
+    unit: str,
+    note: str,
+    now: datetime | None = None,
+    days: int = SPEND_SERIES_DAYS,
+) -> dict[str, Any]:
+    """Daily spend points for an 8-day sparkline (UTC calendar days, including today).
+
+    spent[day] = delta(last observation on day, last observation before day start).
+    Missing days stay null (do not invent 0). Window reset → spent null + gap.
+    """
+    now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    result = _empty_spend_series(unit, note, days=days)
+    series_points = list(points)
+    if current is not None:
+        series_points.append(
+            (now_dt.timestamp(), now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"), float(current))
+        )
+    series_points.sort(key=lambda item: item[0])
+    if len(series_points) < 2:
+        result["note"] = "недостаточно точек для серии"
+        return result
+
+    today = now_dt.date()
+    out_points: list[dict[str, Any]] = []
+    any_value = False
+    any_partial = False
+
+    def last_before(epoch: float) -> float | None:
+        val: float | None = None
+        for item_epoch, _ts, value in series_points:
+            if item_epoch < epoch:
+                val = value
+            else:
+                break
+        return val
+
+    for offset in range(days):
+        day = today - timedelta(days=days - 1 - offset)
+        day_start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        next_midnight = day_start + timedelta(days=1)
+        start_ts = day_start.timestamp()
+        end_excl = next_midnight.timestamp()
+        now_ts = now_dt.timestamp() + 1e-9
+        in_day = [
+            item
+            for item in series_points
+            if start_ts <= item[0] < end_excl and item[0] <= now_ts
+        ]
+        row: dict[str, Any] = {"date": day.isoformat(), "spent": None, "partial": True}
+        if not in_day:
+            any_partial = True
+            out_points.append(row)
+            continue
+        pre = last_before(start_ts)
+        end_val = in_day[-1][2]
+        if pre is None:
+            if len(in_day) < 2:
+                any_partial = True
+                out_points.append(row)
+                continue
+            baseline = in_day[0][2]
+            partial = True
+        else:
+            baseline = pre
+            partial = False
+        if direction == "increase":
+            spent = round(float(end_val) - float(baseline), 6)
+        else:
+            spent = round(float(baseline) - float(end_val), 6)
+        if spent < 0:
+            row["gap"] = "window-reset"
+            any_partial = True
+            out_points.append(row)
+            continue
+        row["spent"] = spent
+        row["partial"] = partial
+        if partial:
+            any_partial = True
+        any_value = True
+        out_points.append(row)
+
+    result["points"] = out_points
+    if not any_value:
+        return result
+    result["gap"] = None
+    result["partial"] = any_partial
+    return result
+
+
+def _deepseek_series_scalar(
+    balance_infos: list[dict[str, Any]] | None,
+) -> tuple[float | None, str]:
+    totals = _balance_totals(balance_infos)
+    if "CNY" in totals:
+        return totals["CNY"], "¥"
+    if "USD" in totals:
+        return totals["USD"], "$"
+    if totals:
+        code, val = next(iter(totals.items()))
+        return val, str(code)
+    return None, "¥"
+
+
+def _deepseek_series_snapshot_points() -> list[tuple[float, str, float]]:
+    points: list[tuple[float, str, float]] = []
+    for obj in load_snapshot_rows():
+        ts_raw, bal = _extract_deepseek_balance_from_snapshot(obj)
+        if bal is None:
+            continue
+        parsed = parse_snapshot_ts(ts_raw)
+        if parsed is None:
+            continue
+        scalar, _unit = _deepseek_series_scalar(bal)
+        if scalar is None:
+            continue
+        points.append((parsed[0], parsed[1], scalar))
+    return points
+
+
+def compute_deepseek_spend_series_7d(
+    current_balance: list[dict[str, Any]] | None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current, unit = _deepseek_series_scalar(current_balance)
+    return compute_spend_series_7d(
+        _deepseek_series_snapshot_points(),
+        current,
+        direction="decrease",
+        unit=unit,
+        note="DeepSeek daily balance delta from local snapshots",
+        now=now,
+    )
+
+
+def compute_openrouter_spend_series_7d(
+    current_total_usage: float | None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    points: list[tuple[float, str, float]] = []
+    for obj in load_snapshot_rows():
+        usage_val = _extract_openrouter_usage_from_snapshot(obj)
+        if usage_val is None:
+            continue
+        parsed = parse_snapshot_ts(obj.get("ts"))
+        if parsed is None:
+            continue
+        points.append((parsed[0], parsed[1], usage_val))
+    return compute_spend_series_7d(
+        points,
+        current_total_usage,
+        direction="increase",
+        unit="$",
+        note="OpenRouter daily total_usage delta from local snapshots",
+        now=now,
+    )
+
+
+def compute_zai_spend_series_7d(
+    probe: dict[str, Any] | None, now: datetime | None = None
+) -> dict[str, Any]:
+    weekly = (probe or {}).get("weekly") if isinstance(probe, dict) else None
+    current = _as_float(weekly.get("currentValue")) if isinstance(weekly, dict) else None
+    return compute_spend_series_7d(
+        _float_snapshot_points(_extract_zai_weekly_used),
+        current,
+        direction="increase",
+        unit="tok",
+        note="Z.AI daily weekly.currentValue delta from local snapshots",
+        now=now,
+    )
+
+
+def compute_commandcode_spend_series_7d(
+    probe: dict[str, Any] | None, now: datetime | None = None
+) -> dict[str, Any]:
+    current = None
+    if isinstance(probe, dict):
+        monthly = probe.get("monthly")
+        if isinstance(monthly, dict):
+            current = _as_float(monthly.get("remaining_usd"))
+        if current is None:
+            current = _as_float(probe.get("monthly_credits"))
+    return compute_spend_series_7d(
+        _float_snapshot_points(_extract_commandcode_monthly_remaining),
+        current,
+        direction="decrease",
+        unit="$",
+        note="Command Code daily monthly remaining delta from local snapshots",
+        now=now,
+    )
+
+
+def compute_kimi_spend_series_7d(
+    probe: dict[str, Any] | None, now: datetime | None = None
+) -> dict[str, Any]:
+    weekly = (probe or {}).get("weekly") if isinstance(probe, dict) else None
+    current = _as_float(weekly.get("used")) if isinstance(weekly, dict) else None
+    return compute_spend_series_7d(
+        _float_snapshot_points(_extract_kimi_weekly_used),
+        current,
+        direction="increase",
+        unit="req",
+        note="Kimi daily weekly.used delta from local snapshots",
+        now=now,
+    )
+
+
+def compute_opencode_go_spend_series_7d(
+    probe: dict[str, Any] | None, now: datetime | None = None
+) -> dict[str, Any]:
+    monthly = (probe or {}).get("monthly") if isinstance(probe, dict) else None
+    current = _as_float(monthly.get("used_usd")) if isinstance(monthly, dict) else None
+    return compute_spend_series_7d(
+        _float_snapshot_points(_extract_opencode_monthly_used),
+        current,
+        direction="increase",
+        unit="$",
+        note="OpenCode Go daily monthly.used_usd delta from local snapshots",
+        now=now,
+    )
 
 
 def _extract_zai_weekly_used(obj: dict[str, Any]) -> float | None:
@@ -1702,6 +1944,7 @@ def build_commandcode_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | N
         "probed_at": probe.get("probed_at"),
         "spend_24h": compute_commandcode_spend(probe, USAGE_WINDOW_HOURS),
         "spend_7d": compute_commandcode_spend(probe, USAGE_WINDOW_7D_HOURS),
+        "spend_series_7d": compute_commandcode_spend_series_7d(probe),
         "models": models_unavailable("Command Code billing API has no per-model breakdown"),
         "source": probe.get("source") or "commandcode-alpha-billing-credits",
         "via": probe.get("via"),
@@ -1949,6 +2192,7 @@ def build_kimi_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
         "probed_at": probe.get("probed_at"),
         "spend_24h": compute_kimi_spend(probe, USAGE_WINDOW_HOURS),
         "spend_7d": compute_kimi_spend(probe, USAGE_WINDOW_7D_HOURS),
+        "spend_series_7d": compute_kimi_spend_series_7d(probe),
         "models": models_unavailable("Kimi /coding/v1/usages has no per-model breakdown"),
         "source": probe.get("source") or "kimi-coding-v1-usages",
         "via": probe.get("via"),
@@ -2183,6 +2427,7 @@ def build_opencode_go_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | N
         "probed_at": probe.get("probed_at"),
         "spend_24h": compute_opencode_go_spend(probe, USAGE_WINDOW_HOURS),
         "spend_7d": compute_opencode_go_spend(probe, USAGE_WINDOW_7D_HOURS),
+        "spend_series_7d": compute_opencode_go_spend_series_7d(probe),
         "models": models_unavailable("OpenCode Go /zen/go/v1/usage has no per-model breakdown"),
         "source": probe.get("source") or "opencode-go-zen-v1-usage",
         "via": probe.get("via"),
@@ -2288,7 +2533,7 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
         "errors": errors,
         "notes": [
             "DeepSeek wallet: balance only; 24h/7d spend from local snapshots (no usage history API); no per-model breakdown.",
-            "OpenRouter wallet: account credits + rolling 24h/7d from snapshots; per-model from GET /api/v1/activity (management key).",
+            "OpenRouter wallet: account credits + rolling 24h/7d from snapshots; 8-day spend_series_7d sparkline; per-model from GET /api/v1/activity (management key).",
             "Z.AI wallet: short session + weekly token limits + MCP; 24h/7d from weekly currentValue snapshots; no per-model.",
             "Command Code wallet: monthly remaining credits + 5h/weekly rolling windows; 24h/7d from monthly remaining snapshots; no per-model.",
             "Kimi Coding wallet: weekly request quota + rolling 5h window; 24h/7d from weekly.used snapshots; no per-model.",
