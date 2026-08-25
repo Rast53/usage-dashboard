@@ -269,7 +269,23 @@ class ProbeCommandCodeCreditsTest(unittest.TestCase):
                         },
                     ):
                         with patch.object(app, "probe_commandcode_credits", side_effect=RuntimeError("boom")):
-                            state = app.collect_state(force_quota=True)
+                            with patch.object(
+                                app,
+                                "probe_kimi_usage",
+                                return_value={
+                                    "ok": True,
+                                    "provider": "kimi",
+                                    "email": "kimi-main",
+                                    "kind": "kimi-coding-quota",
+                                    "status": "active",
+                                    "session": {},
+                                    "weekly": {},
+                                    "error": None,
+                                    "probed_at": "t",
+                                    "remaining_summary": "",
+                                },
+                            ):
+                                state = app.collect_state(force_quota=True)
             self.assertIn("commandcode-credits-probe: boom", state["errors"])
             self.assertTrue(state["wallets"]["deepseek"]["ok"])
             self.assertTrue(state["wallets"]["openrouter"]["ok"])

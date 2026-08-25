@@ -1,5 +1,5 @@
 # Dockhand autodeploy on tw-msk-server (local socket env).
-# Wallet-only stack: DeepSeek / OpenRouter / Z.AI / Command Code.
+# Wallet-only stack: DeepSeek / OpenRouter / Z.AI / Command Code / Kimi.
 # ${VARS} + secrets come from dockhand stack_environment_variables (DEEPSEEK_API_KEY редактируется через UI).
 services:
   usage-dashboard:
@@ -29,6 +29,10 @@ services:
       - COMMANDCODE_API_KEY=${COMMANDCODE_API_KEY:-}
       # Optional: HTTP CONNECT / SOCKS5(h) if api.commandcode.ai is blocked from the container.
       - COMMANDCODE_PROXY=${COMMANDCODE_PROXY:-}
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+      # Optional: HTTP CONNECT / SOCKS5(h) if api.kimi.com is blocked from the container.
+      - KIMI_PROXY=${KIMI_PROXY:-}
+      - KIMI_CODE_BASE_URL=${KIMI_CODE_BASE_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
