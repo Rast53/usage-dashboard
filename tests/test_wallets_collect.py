@@ -197,7 +197,27 @@ class CollectStateTest(unittest.TestCase):
             "probed_at": "2026-08-25T00:00:00Z",
             "remaining_summary": "Moderato · Weekly limit",
         }
-        return {"ds": ds, "or": orp, "zai": zai, "cc": cc, "kimi": kimi}
+        og = {
+            "provider": "opencode-go",
+            "email": "opencode-go-main",
+            "ok": True,
+            "kind": "opencode-go-quota",
+            "status": "active",
+            "plan_label": "Go",
+            "session": {"remaining_percent": 80.5, "cap": 12, "used_percent": 19.5},
+            "weekly": {"remaining_percent": 70.3, "cap": 30, "used_percent": 29.7},
+            "monthly": {
+                "remaining_percent": 75.0,
+                "cap": 60,
+                "used_percent": 25.0,
+                "remaining_usd": 45.0,
+                "next_reset_at": "2026-09-11T14:30:00Z",
+            },
+            "error": None,
+            "probed_at": "2026-08-25T00:00:00Z",
+            "remaining_summary": "Go · 75% left (month)",
+        }
+        return {"ds": ds, "or": orp, "zai": zai, "cc": cc, "kimi": kimi, "og": og}
 
     def test_collect_state_returns_wallets_without_errors(self) -> None:
         probes = self._probes()
@@ -206,7 +226,8 @@ class CollectStateTest(unittest.TestCase):
                 with patch.object(app, "probe_zai_quota", return_value=probes["zai"]):
                     with patch.object(app, "probe_commandcode_credits", return_value=probes["cc"]):
                         with patch.object(app, "probe_kimi_usage", return_value=probes["kimi"]):
-                            state = app.collect_state(force_quota=True)
+                            with patch.object(app, "probe_opencode_go_usage", return_value=probes["og"]):
+                                state = app.collect_state(force_quota=True)
         self.assertEqual(state["errors"], [])
         self.assertEqual(state["accounts"], [])
         self.assertTrue(state["wallets"]["deepseek"]["ok"])
@@ -214,9 +235,10 @@ class CollectStateTest(unittest.TestCase):
         self.assertTrue(state["wallets"]["zai"]["ok"])
         self.assertTrue(state["wallets"]["commandcode"]["ok"])
         self.assertTrue(state["wallets"]["kimi"]["ok"])
+        self.assertTrue(state["wallets"]["opencode-go"]["ok"])
         self.assertEqual(
             state["providers"]["wallets"]["keys"],
-            ["deepseek", "openrouter", "zai", "commandcode", "kimi"],
+            ["deepseek", "openrouter", "zai", "commandcode", "kimi", "opencode-go"],
         )
         self.assertNotIn("cpa", json.dumps(state).lower())
 
@@ -236,7 +258,8 @@ class CollectStateTest(unittest.TestCase):
                 with patch.object(app, "probe_zai_quota", return_value=self._probes()["zai"]):
                     with patch.object(app, "probe_commandcode_credits", return_value=self._probes()["cc"]):
                         with patch.object(app, "probe_kimi_usage", return_value=self._probes()["kimi"]):
-                            app.collect_state(force_quota=False)
+                            with patch.object(app, "probe_opencode_go_usage", return_value=self._probes()["og"]):
+                                app.collect_state(force_quota=False)
         self.assertEqual(calls["n"], 1)
 
     def test_refresh_once_health_and_snapshot_schema(self) -> None:
@@ -246,10 +269,11 @@ class CollectStateTest(unittest.TestCase):
                 with patch.object(app, "probe_zai_quota", return_value=probes["zai"]):
                     with patch.object(app, "probe_commandcode_credits", return_value=probes["cc"]):
                         with patch.object(app, "probe_kimi_usage", return_value=probes["kimi"]):
-                            state = app.refresh_once(force_quota=True)
+                            with patch.object(app, "probe_opencode_go_usage", return_value=probes["og"]):
+                                state = app.refresh_once(force_quota=True)
         health = app.health()
         self.assertTrue(health["ok"])
-        self.assertEqual(health["wallets"], 5)
+        self.assertEqual(health["wallets"], 6)
         self.assertEqual(health["errors"], [])
         self.assertIsNotNone(health.get("quota_probe_updated_at"))
         snap_line = (self.dir / "snapshots.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1]
@@ -258,9 +282,11 @@ class CollectStateTest(unittest.TestCase):
         self.assertIn("deepseek", row["wallets"])
         self.assertIn("commandcode", row["wallets"])
         self.assertIn("kimi", row["wallets"])
+        self.assertIn("opencode-go", row["wallets"])
         self.assertEqual(state["wallets"]["openrouter"]["remaining"], 8.0)
         self.assertEqual(state["wallets"]["commandcode"]["plan_label"], "GOAT")
         self.assertEqual(state["wallets"]["kimi"]["plan_label"], "Moderato")
+        self.assertEqual(state["wallets"]["opencode-go"]["plan_label"], "Go")
 
 
 if __name__ == "__main__":

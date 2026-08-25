@@ -250,12 +250,27 @@ class ProbeKimiUsageTest(unittest.TestCase):
                             },
                         ):
                             with patch.object(app, "probe_kimi_usage", side_effect=RuntimeError("boom")):
-                                state = app.collect_state(force_quota=True)
+                                with patch.object(
+                                    app,
+                                    "probe_opencode_go_usage",
+                                    return_value={
+                                        **ok,
+                                        "provider": "opencode-go",
+                                        "email": "opencode-go-main",
+                                        "kind": "opencode-go-quota",
+                                        "status": "active",
+                                        "session": {},
+                                        "weekly": {},
+                                        "monthly": {},
+                                    },
+                                ):
+                                    state = app.collect_state(force_quota=True)
             self.assertIn("kimi-usage-probe: boom", state["errors"])
             self.assertTrue(state["wallets"]["deepseek"]["ok"])
             self.assertTrue(state["wallets"]["openrouter"]["ok"])
             self.assertTrue(state["wallets"]["zai"]["ok"])
             self.assertTrue(state["wallets"]["commandcode"]["ok"])
+            self.assertTrue(state["wallets"]["opencode-go"]["ok"])
             self.assertNotIn("kimi", state["wallets"])
         finally:
             for p in reversed(patches):
