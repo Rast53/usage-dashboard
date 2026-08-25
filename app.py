@@ -39,6 +39,7 @@ WALLET_PROBE_KEYS = (
     "zai-main",
     "commandcode-main",
     "kimi-main",
+    "opencode-go-main",
 )
 
 COMMANDCODE_API_BASE = "https://api.commandcode.ai"
@@ -46,6 +47,14 @@ COMMANDCODE_CREDITS_PATH = "/alpha/billing/credits"
 COMMANDCODE_SUBSCRIPTIONS_PATH = "/alpha/billing/subscriptions"
 KIMI_CODE_DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1"
 KIMI_CODE_USAGES_PATH = "/usages"
+OPENCODE_GO_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
+OPENCODE_GO_USAGE_PATH = "/usage"
+# Published Go windows (docs 2026-08-25). The usage API returns used %, not USD.
+OPENCODE_GO_CAPS: dict[str, float] = {
+    "session": 12.0,
+    "weekly": 30.0,
+    "monthly": 60.0,
+}
 # Published weekly request quotas (Kimi Code membership docs 2026-08-25). 5h cap is 200 for all tiers.
 KIMI_WEEKLY_PLANS: dict[float, str] = {
     1024.0: "Andante",
@@ -1577,6 +1586,237 @@ def build_kimi_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def get_opencode_go_proxy() -> str | None:
+    """HTTP CONNECT or SOCKS5/SOCKS5h for opencode.ai (optional tw-msk egress)."""
+    for name in ("OPENCODE_GO_PROXY", "OPENCODE_PROXY"):
+        raw = os.environ.get(name, "").strip()
+        if raw:
+            return raw
+    return None
+
+
+def get_opencode_go_api_key() -> str | None:
+    """Env OPENCODE_GO_API_KEY or OPENCODE_API_KEY (Hermes / pi-go-bars alias)."""
+    for name in ("OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"):
+        key = os.environ.get(name)
+        if key and len(key.strip()) > 10:
+            return key.strip()
+    return None
+
+
+def get_opencode_go_base_url() -> str:
+    raw = os.environ.get("OPENCODE_GO_BASE_URL", "").strip().rstrip("/")
+    return raw or OPENCODE_GO_DEFAULT_BASE_URL
+
+
+def opencode_go_usage_url() -> str:
+    base = get_opencode_go_base_url()
+    if base.endswith(OPENCODE_GO_USAGE_PATH):
+        return base
+    return base + OPENCODE_GO_USAGE_PATH
+
+
+def _opencode_go_reset_iso(raw: dict[str, Any]) -> str | None:
+    reset_at = _kimi_reset_iso(_pick(raw, "resetsAt", "resets_at", "resetAt", "reset_at"))
+    if reset_at:
+        return reset_at
+    reset_in = _as_float(_pick(raw, "resetInSec", "reset_in_sec", "resets_in_seconds", "resetInSeconds"))
+    if reset_in is None or reset_in < 0:
+        return None
+    ts = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + reset_in, timezone.utc)
+    return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_opencode_go_window(raw: Any, kind: str, label: str) -> dict[str, Any] | None:
+    """Parse one Go window. Wire `percent` is used %, remaining = 100 - used."""
+    if not isinstance(raw, dict):
+        return None
+    used_pct = _as_float(_pick(raw, "percent", "usagePercent", "usage_percent", "used_percent"))
+    rem_pct = _as_float(_pick(raw, "remaining_percent", "remainingPercent"))
+    if used_pct is None and rem_pct is None:
+        return None
+    if used_pct is None and rem_pct is not None:
+        used_pct = round(max(0.0, 100.0 - rem_pct), 2)
+    if rem_pct is None and used_pct is not None:
+        rem_pct = round(max(0.0, 100.0 - used_pct), 2)
+    status = _pick(raw, "status")
+    if isinstance(status, str):
+        status = status.strip().lower() or None
+    else:
+        status = None
+    if status == "rate-limited":
+        used_pct = 100.0 if used_pct is None else used_pct
+        rem_pct = 0.0
+    cap = OPENCODE_GO_CAPS.get(kind)
+    remaining_usd = round(cap * rem_pct / 100.0, 4) if cap is not None and rem_pct is not None else None
+    used_usd = round(cap * used_pct / 100.0, 4) if cap is not None and used_pct is not None else None
+    reset_at = _opencode_go_reset_iso(raw)
+    headline_pct = rem_pct if rem_pct is not None else 0.0
+    summary = f"{headline_pct:.0f}% left ({label})"
+    if remaining_usd is not None and cap is not None:
+        summary += f" · ${remaining_usd:.2f} / ${cap:.2f}"
+    return {
+        "kind": kind,
+        "status": status,
+        "used_percent": round(used_pct, 2) if used_pct is not None else None,
+        "remaining_percent": round(rem_pct, 2) if rem_pct is not None else None,
+        "cap": cap,
+        "remaining_usd": remaining_usd,
+        "used_usd": used_usd,
+        "next_reset_at": reset_at,
+        "summary": summary,
+    }
+
+
+def _unwrap_opencode_go_payload(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict):
+        return None
+    usage = data.get("usage")
+    if isinstance(usage, dict):
+        return usage
+    inner = data.get("data")
+    if isinstance(inner, dict):
+        nested = inner.get("usage")
+        if isinstance(nested, dict):
+            return nested
+        if any(
+            key in inner
+            for key in ("rolling", "weekly", "monthly", "rollingUsage", "weeklyUsage", "monthlyUsage")
+        ):
+            return inner
+    if any(
+        key in data
+        for key in ("rolling", "weekly", "monthly", "rollingUsage", "weeklyUsage", "monthlyUsage")
+    ):
+        return data
+    return None
+
+
+def _opencode_go_api_error(data: Any, err: str | None, st: int | None) -> str:
+    if isinstance(data, dict):
+        err_obj = data.get("error")
+        if isinstance(err_obj, dict):
+            msg = err_obj.get("message") or err_obj.get("type")
+            if msg:
+                return f"usage API: {st} {msg}".strip()
+        if isinstance(err_obj, str) and err_obj:
+            return f"usage API: {st} {err_obj}".strip()
+        if data.get("type") == "error" and isinstance(data.get("message"), str):
+            return f"usage API: {st} {data['message']}".strip()
+    if isinstance(data, str) and data.lstrip().startswith("<"):
+        return f"usage API: {st} HTML (not JSON)".strip()
+    return f"usage API: {st} {err or data}".strip()
+
+
+def probe_opencode_go_usage() -> dict[str, Any]:
+    """Fetch OpenCode Go rolling / weekly / monthly windows.
+
+    Primary: GET https://opencode.ai/zen/go/v1/usage (Bearer Go API key).
+    Cookie workspace scrape / Zen balance are not used.
+    """
+    key = get_opencode_go_api_key()
+    result: dict[str, Any] = {
+        "provider": "opencode-go",
+        "email": "opencode-go-main",
+        "probed_at": now_iso(),
+        "ok": False,
+        "kind": "opencode-go-quota",
+        "status": "error",
+        "plan_label": "Go",
+        "session": None,
+        "weekly": None,
+        "monthly": None,
+        "error": None,
+        "source": "opencode-go-zen-v1-usage",
+    }
+    if not key:
+        result["status"] = "manual"
+        result["error"] = "OPENCODE_GO_API_KEY not set"
+        return result
+
+    proxy = get_opencode_go_proxy()
+    result["via"] = {
+        "base_url": get_opencode_go_base_url(),
+        "proxy": redact_proxy_url(proxy),
+    }
+
+    st, _hdrs, data, err = http_json(
+        opencode_go_usage_url(),
+        token=key,
+        proxy=proxy,
+        timeout=15.0,
+    )
+    if st != 200 or not isinstance(data, dict):
+        result["error"] = _opencode_go_api_error(data, err, st)
+        return result
+    if data.get("type") == "error" or data.get("success") is False:
+        result["error"] = _opencode_go_api_error(data, err, st)
+        return result
+
+    payload = _unwrap_opencode_go_payload(data)
+    if not payload:
+        result["error"] = "usage API: missing usage windows"
+        return result
+
+    session = _parse_opencode_go_window(
+        _pick(payload, "rolling", "rollingUsage", "rolling_usage", "fiveHour", "five_hour"),
+        "session",
+        "5h",
+    )
+    weekly = _parse_opencode_go_window(
+        _pick(payload, "weekly", "weeklyUsage", "weekly_usage"),
+        "weekly",
+        "week",
+    )
+    monthly = _parse_opencode_go_window(
+        _pick(payload, "monthly", "monthlyUsage", "monthly_usage"),
+        "monthly",
+        "month",
+    )
+    if session is None and weekly is None and monthly is None:
+        result["error"] = "usage API: missing usage windows"
+        return result
+
+    result["ok"] = True
+    result["status"] = "active"
+    result["session"] = session
+    result["weekly"] = weekly
+    result["monthly"] = monthly
+
+    parts = []
+    if monthly:
+        parts.append(monthly["summary"])
+    if session:
+        parts.append(session["summary"])
+    if weekly:
+        parts.append(weekly["summary"])
+    result["remaining_summary"] = "Go · " + " · ".join(parts) if parts else "Go"
+    return result
+
+
+def build_opencode_go_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not probe:
+        return None
+    status = probe.get("status") or ("active" if probe.get("ok") else "error")
+    return {
+        "provider": "opencode-go",
+        "email": "opencode-go-main",
+        "name": "OpenCode Go",
+        "kind": "opencode-go-quota",
+        "status": status,
+        "ok": bool(probe.get("ok")),
+        "plan_label": probe.get("plan_label") or "Go",
+        "session": probe.get("session") or {},
+        "weekly": probe.get("weekly") or {},
+        "monthly": probe.get("monthly") or {},
+        "remaining_summary": probe.get("remaining_summary") or "",
+        "error": probe.get("error"),
+        "probed_at": probe.get("probed_at"),
+        "source": probe.get("source") or "opencode-go-zen-v1-usage",
+        "via": probe.get("via"),
+    }
+
+
 def _probe_cache_stale(cache: dict[str, Any]) -> bool:
     acc = (cache or {}).get("accounts") or {}
     if not all(k in acc for k in WALLET_PROBE_KEYS):
@@ -1628,6 +1868,12 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
                     probed["kimi-main"] = kimi_result
             except Exception as e:
                 errors.append(f"kimi-usage-probe: {e}")
+            try:
+                og_result = probe_opencode_go_usage()
+                if og_result is not None:
+                    probed["opencode-go-main"] = og_result
+            except Exception as e:
+                errors.append(f"opencode-go-usage-probe: {e}")
             _quota_cache = {
                 "updated_at": now_iso(),
                 "accounts": probed,
@@ -1641,6 +1887,7 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
     zai_wallet = build_zai_wallet(quota_accounts.get("zai-main"))
     commandcode_wallet = build_commandcode_wallet(quota_accounts.get("commandcode-main"))
     kimi_wallet = build_kimi_wallet(quota_accounts.get("kimi-main"))
+    opencode_go_wallet = build_opencode_go_wallet(quota_accounts.get("opencode-go-main"))
     if deepseek_wallet:
         wallets["deepseek"] = deepseek_wallet
     if openrouter_wallet:
@@ -1651,6 +1898,8 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
         wallets["commandcode"] = commandcode_wallet
     if kimi_wallet:
         wallets["kimi"] = kimi_wallet
+    if opencode_go_wallet:
+        wallets["opencode-go"] = opencode_go_wallet
 
     return {
         "updated_at": now_iso(),
@@ -1671,6 +1920,7 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
             "Z.AI wallet: short session + weekly token limits + MCP tools from quota/limit API.",
             "Command Code wallet: monthly remaining credits + 5h/weekly rolling windows from /alpha/billing/credits.",
             "Kimi Coding wallet: weekly request quota + rolling 5h window from /coding/v1/usages.",
+            "OpenCode Go wallet: monthly remaining + 5h/weekly windows from /zen/go/v1/usage (percent is used; remaining = 100-used).",
             f"Usage window: last {USAGE_WINDOW_HOURS}h.",
         ],
     }
@@ -1699,7 +1949,7 @@ def poller() -> None:
 @app.on_event("startup")
 def _startup() -> None:
     load_state()
-    # Do not block uvicorn bind on network probes (DeepSeek/OpenRouter/Z.AI/Command Code/Kimi).
+    # Do not block uvicorn bind on network probes (DeepSeek/OpenRouter/Z.AI/Command Code/Kimi/OpenCode Go).
     def _bg() -> None:
         try:
             refresh_once(force_quota=True)
