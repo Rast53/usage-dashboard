@@ -774,6 +774,12 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
 
 
 
+def get_zai_proxy() -> str | None:
+    """HTTP CONNECT or SOCKS5/SOCKS5h for api.z.ai (docker-egress on tw-msk)."""
+    raw = os.environ.get("ZAI_PROXY", "").strip()
+    return raw or None
+
+
 def get_zai_api_key() -> str | None:
     """Env ZAI_API_KEY > openclaw.json > gateway.systemd.env."""
     key = os.environ.get("ZAI_API_KEY")
@@ -886,9 +892,13 @@ def probe_zai_quota() -> dict[str, Any]:
         result["error"] = "ZAI_API_KEY not set"
         return result
 
+    proxy = get_zai_proxy()
+    result["via"] = {"proxy": redact_proxy_url(proxy)}
+
     st, _hdrs, data, err = http_json(
         "https://api.z.ai/api/monitor/usage/quota/limit",
         token=key,
+        proxy=proxy,
         timeout=15.0,
     )
     if st != 200 or not isinstance(data, dict):
@@ -970,6 +980,7 @@ def probe_zai_quota() -> dict[str, Any]:
         st2, _h2, data2, _e2 = http_json(
             "https://api.z.ai/api/biz/subscription/list",
             token=key,
+            proxy=proxy,
             timeout=5.0,
         )
         if st2 == 200 and isinstance(data2, dict):
@@ -1003,6 +1014,7 @@ def build_zai_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | None:
         "error": probe.get("error"),
         "probed_at": probe.get("probed_at"),
         "source": "zai-monitor-quota-limit",
+        "via": probe.get("via"),
     }
 
 
