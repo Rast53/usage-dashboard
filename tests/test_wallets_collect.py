@@ -166,20 +166,43 @@ class CollectStateTest(unittest.TestCase):
             "probed_at": "2026-08-25T00:00:00Z",
             "remaining_summary": "plan pro",
         }
-        return {"ds": ds, "or": orp, "zai": zai}
+        cc = {
+            "provider": "commandcode",
+            "email": "commandcode-main",
+            "ok": True,
+            "kind": "commandcode-credits",
+            "status": "active",
+            "plan_id": "individual-goat",
+            "plan_label": "GOAT",
+            "monthly_credits": 62.1,
+            "monthly_allowance": 70.0,
+            "purchased_credits": 0,
+            "session": {"remaining_percent": 85, "cap": 14, "used": 2.1},
+            "weekly": {"remaining_percent": 77, "cap": 35, "used": 8},
+            "monthly": {"remaining_percent": 88.7, "remaining_usd": 62.1, "cap": 70},
+            "error": None,
+            "probed_at": "2026-08-25T00:00:00Z",
+            "remaining_summary": "GOAT · $62.10 month",
+        }
+        return {"ds": ds, "or": orp, "zai": zai, "cc": cc}
 
     def test_collect_state_returns_wallets_without_errors(self) -> None:
         probes = self._probes()
         with patch.object(app, "probe_deepseek_balance", return_value=probes["ds"]):
             with patch.object(app, "probe_openrouter_wallet", return_value=probes["or"]):
                 with patch.object(app, "probe_zai_quota", return_value=probes["zai"]):
-                    state = app.collect_state(force_quota=True)
+                    with patch.object(app, "probe_commandcode_credits", return_value=probes["cc"]):
+                        state = app.collect_state(force_quota=True)
         self.assertEqual(state["errors"], [])
         self.assertEqual(state["accounts"], [])
         self.assertTrue(state["wallets"]["deepseek"]["ok"])
         self.assertTrue(state["wallets"]["openrouter"]["ok"])
         self.assertTrue(state["wallets"]["zai"]["ok"])
-        self.assertEqual(state["providers"]["wallets"]["keys"], ["deepseek", "openrouter", "zai"])
+        self.assertTrue(state["wallets"]["commandcode"]["ok"])
+        self.assertEqual(
+            state["providers"]["wallets"]["keys"],
+            ["deepseek", "openrouter", "zai", "commandcode"],
+        )
         self.assertNotIn("cpa", json.dumps(state).lower())
 
     def test_stale_legacy_cache_forces_wallet_probes(self) -> None:
@@ -196,7 +219,8 @@ class CollectStateTest(unittest.TestCase):
         with patch.object(app, "probe_deepseek_balance", side_effect=ds):
             with patch.object(app, "probe_openrouter_wallet", return_value=self._probes()["or"]):
                 with patch.object(app, "probe_zai_quota", return_value=self._probes()["zai"]):
-                    app.collect_state(force_quota=False)
+                    with patch.object(app, "probe_commandcode_credits", return_value=self._probes()["cc"]):
+                        app.collect_state(force_quota=False)
         self.assertEqual(calls["n"], 1)
 
     def test_refresh_once_health_and_snapshot_schema(self) -> None:
@@ -204,17 +228,20 @@ class CollectStateTest(unittest.TestCase):
         with patch.object(app, "probe_deepseek_balance", return_value=probes["ds"]):
             with patch.object(app, "probe_openrouter_wallet", return_value=probes["or"]):
                 with patch.object(app, "probe_zai_quota", return_value=probes["zai"]):
-                    state = app.refresh_once(force_quota=True)
+                    with patch.object(app, "probe_commandcode_credits", return_value=probes["cc"]):
+                        state = app.refresh_once(force_quota=True)
         health = app.health()
         self.assertTrue(health["ok"])
-        self.assertEqual(health["wallets"], 3)
+        self.assertEqual(health["wallets"], 4)
         self.assertEqual(health["errors"], [])
         self.assertIsNotNone(health.get("quota_probe_updated_at"))
         snap_line = (self.dir / "snapshots.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1]
         row = json.loads(snap_line)
         self.assertEqual(row["accounts"], [])
         self.assertIn("deepseek", row["wallets"])
+        self.assertIn("commandcode", row["wallets"])
         self.assertEqual(state["wallets"]["openrouter"]["remaining"], 8.0)
+        self.assertEqual(state["wallets"]["commandcode"]["plan_label"], "GOAT")
 
 
 if __name__ == "__main__":
