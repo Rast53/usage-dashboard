@@ -283,3 +283,20 @@ class ProbeCommandCodeCreditsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HttpJsonUserAgentTest(unittest.TestCase):
+    def test_http_json_sends_custom_user_agent(self) -> None:
+        """CF-зона api.commandcode.ai банит Python-urllib default UA (Error 1010)."""
+        captured = {}
+
+        def fake_http_request(url, token=None, proxy=None, method="GET", body=None, headers=None, timeout=20.0, ssl_verify=True):
+            captured["headers"] = headers or {}
+            return 200, {}, b"{}", None
+
+        with patch.object(app, "http_request", side_effect=fake_http_request):
+            st, _h, _d, err = app.http_json("https://api.commandcode.ai/alpha/billing/credits", token="x")
+        ua = captured["headers"].get("User-Agent", "")
+        assert ua, "User-Agent header missing"
+        assert not ua.startswith("Python-urllib"), f"default urllib UA banned by Cloudflare: {ua}"
+        assert err is None and st == 200

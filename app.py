@@ -219,6 +219,9 @@ def http_request(
         return None, {}, b"", str(e)
 
 
+DASHBOARD_USER_AGENT = "usage-dashboard/1.0 (+https://usage.ragpt.ru)"
+
+
 def http_json(
     url: str,
     token: str,
@@ -228,7 +231,7 @@ def http_json(
     timeout: float = 20.0,
     ssl_verify: bool = True,
 ) -> tuple[int | None, dict[str, str], Any, str | None]:
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": "application/json", "User-Agent": DASHBOARD_USER_AGENT}
     if body is not None:
         headers["Content-Type"] = "application/json"
     st, hdrs, raw, err = http_request(
