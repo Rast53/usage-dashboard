@@ -37,6 +37,9 @@ services:
       # Optional: HTTP CONNECT / SOCKS5(h) if opencode.ai is blocked from the container.
       - OPENCODE_GO_PROXY=${OPENCODE_GO_PROXY:-}
       - OPENCODE_GO_BASE_URL=${OPENCODE_GO_BASE_URL:-}
+      # Instance allowlist / title. Empty = all 6 providers, «Мои подписки».
+      - PROVIDERS=${PROVIDERS:-}
+      - SITE_TITLE=${SITE_TITLE:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

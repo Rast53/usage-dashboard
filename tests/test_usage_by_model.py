@@ -465,6 +465,8 @@ class UiCopyTest(unittest.TestCase):
         self.assertIn("fonts.googleapis.com", html)
         self.assertIn("family=Inter", html)
         self.assertNotRegex(html, r"<script[^>]+src=")
+        self.assertIn("applySiteTitle", html)
+        self.assertIn("sourceLabels", html)
         self.assertNotRegex(html, r"(?i)cpa|USAGE_PG_DSN|psycopg2")
 
 

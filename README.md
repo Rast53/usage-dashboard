@@ -37,6 +37,8 @@ Browser → Traefik (usage.ragpt.ru)
 - `GET /api/quota` — кеш последних wallet-проб
 - `POST /api/refresh` — принудительное обновление проб
 
+`GET /api/summary` также отдаёт `site_title` и `enabled_providers` (из env `SITE_TITLE` / `PROVIDERS`). Пустые значения = текущее поведение: заголовок «Мои подписки» и все 6 провайдеров.
+
 ## Local run
 ```bash
 export DEEPSEEK_API_KEY=...
@@ -55,7 +57,9 @@ python3 app.py
 Live: Dockhand **stack 7** on `tw-msk-server`, `https://usage.ragpt.ru`.
 Push to `main` → git webhook → build/recreate. Container `usage-dashboard-usage-dashboard-1`.
 
-Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI / COMMANDCODE / KIMI / OPENCODE_GO + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY` + optional `COMMANDCODE_PROXY` / `KIMI_PROXY` / `KIMI_CODE_BASE_URL` / `OPENCODE_GO_PROXY` / `OPENCODE_GO_BASE_URL`). Do not commit keys or proxy passwords. `ZAI_PROXY`, `COMMANDCODE_API_KEY`, `KIMI_API_KEY` and `OPENCODE_GO_API_KEY` are `is_secret`.
+Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI / COMMANDCODE / KIMI / OPENCODE_GO + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY` + optional `COMMANDCODE_PROXY` / `KIMI_PROXY` / `KIMI_CODE_BASE_URL` / `OPENCODE_GO_PROXY` / `OPENCODE_GO_BASE_URL` + optional `PROVIDERS` / `SITE_TITLE`). Do not commit keys or proxy passwords. `ZAI_PROXY`, `COMMANDCODE_API_KEY`, `KIMI_API_KEY` and `OPENCODE_GO_API_KEY` are `is_secret`.
+
+Второй инстанс (после merge, ops): тот же образ, `PROVIDERS=opencode-go`, `SITE_TITLE=OpenCode Go — Алан`, отдельный volume, Traefik `usage.alan.ragpt.ru` **без** basicauth. Основной `usage.ragpt.ru` не задаёт эти переменные (дефолт = все 6). Ключ Алана только в Dockhand secret.
 
 Data volume: `/opt/usage-dashboard/data` → `/app/data`. Historical `snapshots.jsonl` stays on the volume (24h spend); do not truncate it.
 

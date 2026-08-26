@@ -207,7 +207,7 @@
     <div class="section-label">Провайдеры</div>
     <div class="card-grid" id="providers"></div>
 
-    <div class="section-label">По моделям · OpenRouter · 7д</div>
+    <div class="section-label" id="models-label">По моделям · OpenRouter · 7д</div>
     <div class="models-block" id="models"></div>
   </div>
 
@@ -726,15 +726,52 @@ function renderModelsSection(orWallet) {
   return html;
 }
 
+const WALLET_LABELS = {
+  zai: 'Z.AI',
+  commandcode: 'Command Code',
+  kimi: 'Kimi',
+  'opencode-go': 'OpenCode Go',
+  deepseek: 'DeepSeek',
+  openrouter: 'OpenRouter',
+};
+const STAT_LABEL_ORDER = ['deepseek', 'openrouter', 'zai', 'commandcode', 'kimi', 'opencode-go'];
+const CARD_ORDER = ['zai', 'commandcode', 'kimi', 'opencode-go', 'deepseek', 'openrouter'];
+
+function applySiteTitle(title) {
+  const t = (title && String(title).trim()) ? String(title).trim() : 'Мои подписки';
+  document.title = t + ' · raclaw';
+  const h1 = document.querySelector('h1');
+  if (h1) h1.textContent = t;
+}
+
+function providersGenitive(n) {
+  return n === 1 ? 'провайдера' : 'провайдеров';
+}
+
+function orderedWalletKeys(wallets) {
+  const keys = [];
+  STAT_LABEL_ORDER.forEach(function(k) {
+    if (wallets[k]) keys.push(k);
+  });
+  Object.keys(wallets).forEach(function(k) {
+    if (STAT_LABEL_ORDER.indexOf(k) < 0 && wallets[k]) keys.push(k);
+  });
+  return keys;
+}
+
+function sourceLabels(wallets) {
+  return orderedWalletKeys(wallets).map(function(k) {
+    return WALLET_LABELS[k] || k;
+  }).join(' · ');
+}
+
+function orderedWalletItems(wallets) {
+  return orderedWalletKeys(wallets).map(function(k) { return wallets[k]; });
+}
+
 function renderStats(data) {
   const wallets = data.wallets || {};
-  const allItems = [];
-  if (wallets.zai) allItems.push(wallets.zai);
-  if (wallets.commandcode) allItems.push(wallets.commandcode);
-  if (wallets.kimi) allItems.push(wallets.kimi);
-  if (wallets['opencode-go']) allItems.push(wallets['opencode-go']);
-  if (wallets.deepseek) allItems.push(wallets.deepseek);
-  if (wallets.openrouter) allItems.push(wallets.openrouter);
+  const allItems = orderedWalletItems(wallets);
 
   let active = 0, attention = 0, live = 0;
   allItems.forEach(function(item) {
@@ -745,22 +782,37 @@ function renderStats(data) {
   });
 
   let spendParts = [];
-  const dsSpend = (wallets.deepseek || {}).spend_24h || {};
-  if (dsSpend.spent != null) {
-    const dsVal = typeof dsSpend.spent === 'object' ? (dsSpend.spent.CNY != null ? Number(dsSpend.spent.CNY) : null) : Number(dsSpend.spent);
-    if (dsVal != null) spendParts.push('¥' + money(Math.abs(dsVal)));
+  let spendSub;
+  if (wallets.deepseek || wallets.openrouter) {
+    const dsSpend = (wallets.deepseek || {}).spend_24h || {};
+    if (dsSpend.spent != null) {
+      const dsVal = typeof dsSpend.spent === 'object' ? (dsSpend.spent.CNY != null ? Number(dsSpend.spent.CNY) : null) : Number(dsSpend.spent);
+      if (dsVal != null) spendParts.push('¥' + money(Math.abs(dsVal)));
+    }
+    const orSpend = (wallets.openrouter || {}).spend_24h || {};
+    if (orSpend.spent != null) spendParts.push('$' + money(orSpend.spent));
+    const spendNames = [];
+    if (wallets.deepseek) spendNames.push('DeepSeek');
+    if (wallets.openrouter) spendNames.push('OpenRouter');
+    spendSub = spendNames.join(' + ') + ' · 7д на карточках';
+  } else {
+    allItems.forEach(function(item) {
+      const s = item.spend_24h || {};
+      const t = compactSpend(s);
+      if (s.spent != null && t) spendParts.push(t);
+    });
+    spendSub = (sourceLabels(wallets) || 'провайдер') + ' · 7д на карточках';
   }
-  const orSpend = (wallets.openrouter || {}).spend_24h || {};
-  if (orSpend.spent != null) spendParts.push('$' + money(orSpend.spent));
   const spendStr = spendParts.length ? spendParts.join(' + ') : '—';
   const attSub = attention > 0 ? (attention + ' лимит') : 'всё нормально';
   const statClass = attention > 0 ? 'critical' : '';
+  const labels = sourceLabels(wallets) || 'нет источников';
 
   document.getElementById('stats').innerHTML =
-    '<div class="stat-card"><div class="stat-k">Расход 24ч</div><div class="stat-v">' + spendStr + '</div><div class="stat-sub">DeepSeek + OpenRouter · 7д на карточках</div></div>' +
-    '<div class="stat-card"><div class="stat-k">Активных</div><div class="stat-v ok-text">' + active + '</div><div class="stat-sub">из ' + allItems.length + ' провайдеров</div></div>' +
+    '<div class="stat-card"><div class="stat-k">Расход 24ч</div><div class="stat-v">' + spendStr + '</div><div class="stat-sub">' + escapeHtml(spendSub) + '</div></div>' +
+    '<div class="stat-card"><div class="stat-k">Активных</div><div class="stat-v ok-text">' + active + '</div><div class="stat-sub">из ' + allItems.length + ' ' + providersGenitive(allItems.length) + '</div></div>' +
     '<div class="stat-card ' + statClass + '"><div class="stat-k">Требует внимания</div><div class="stat-v ' + (attention > 0 ? 'bad-text' : '') + '">' + attention + '</div><div class="stat-sub">' + attSub + '</div></div>' +
-    '<div class="stat-card"><div class="stat-k">Источники</div><div class="stat-v">' + live + ' / ' + allItems.length + '</div><div class="stat-sub">DeepSeek · OpenRouter · Z.AI · Command Code · Kimi · OpenCode Go</div></div>';
+    '<div class="stat-card"><div class="stat-k">Источники</div><div class="stat-v">' + live + ' / ' + allItems.length + '</div><div class="stat-sub">' + escapeHtml(labels) + '</div></div>';
 }
 
 async function refresh() {
@@ -785,6 +837,8 @@ async function load() {
     document.getElementById('updated').textContent =
       'обновлено: ' + fmtDateTime(data.updated_at) + ' · авто 30с';
 
+    applySiteTitle(data.site_title);
+
     const errs = data.errors || [];
     document.getElementById('errors').innerHTML = errs.map(function(e) {
       return '<div class="err">' + escapeHtml(e) + '</div>';
@@ -794,16 +848,24 @@ async function load() {
 
     const wallets = data.wallets || {};
     var expanded = getExpandedIds();
-    const providerCards = [
-      renderZaiCard(wallets.zai),
-      renderCommandcodeCard(wallets.commandcode),
-      renderKimiCard(wallets.kimi),
-      renderOpencodeGoCard(wallets['opencode-go']),
-      renderDeepseekCard(wallets.deepseek),
-      renderOpenrouterCard(wallets.openrouter),
-    ].filter(Boolean).join('');
+    const cardRenderers = {
+      zai: renderZaiCard,
+      commandcode: renderCommandcodeCard,
+      kimi: renderKimiCard,
+      'opencode-go': renderOpencodeGoCard,
+      deepseek: renderDeepseekCard,
+      openrouter: renderOpenrouterCard,
+    };
+    const providerCards = CARD_ORDER.map(function(key) {
+      const render = cardRenderers[key];
+      return render ? render(wallets[key]) : '';
+    }).filter(Boolean).join('');
     document.getElementById('providers').innerHTML = providerCards || '<div class="muted">Нет данных</div>';
-    document.getElementById('models').innerHTML = renderModelsSection(wallets.openrouter);
+    const hasOpenrouter = !!wallets.openrouter;
+    document.getElementById('models-label').style.display = hasOpenrouter ? '' : 'none';
+    const modelsEl = document.getElementById('models');
+    modelsEl.style.display = hasOpenrouter ? '' : 'none';
+    modelsEl.innerHTML = renderModelsSection(wallets.openrouter);
     applyExpandedIds(expanded);
   } catch(e) {
     document.getElementById('errors').innerHTML = '<div class="err">Ошибка загрузки: ' + escapeHtml(e.message) + '</div>';

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import html as html_lib
 import json
 import os
 import ssl
@@ -16,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 try:
     import socks
@@ -36,14 +37,16 @@ USAGE_WINDOW_HOURS = int(os.environ.get("USAGE_WINDOW_HOURS", "24"))
 USAGE_WINDOW_7D_HOURS = 168
 SPEND_SERIES_DAYS = 8
 NO_MODEL_BREAKDOWN = "нет разбивки от провайдера"
-WALLET_PROBE_KEYS = (
-    "deepseek-main",
-    "openrouter-main",
-    "zai-main",
-    "commandcode-main",
-    "kimi-main",
-    "opencode-go-main",
+DEFAULT_SITE_TITLE = "Мои подписки"
+KNOWN_PROVIDERS: tuple[str, ...] = (
+    "deepseek",
+    "openrouter",
+    "zai",
+    "commandcode",
+    "kimi",
+    "opencode-go",
 )
+WALLET_PROBE_KEYS = tuple(f"{name}-main" for name in KNOWN_PROVIDERS)
 
 COMMANDCODE_API_BASE = "https://api.commandcode.ai"
 COMMANDCODE_CREDITS_PATH = "/alpha/billing/credits"
@@ -266,6 +269,25 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_site_title() -> str:
+    raw = os.environ.get("SITE_TITLE", "").strip()
+    return raw or DEFAULT_SITE_TITLE
+
+
+def get_enabled_providers() -> list[str]:
+    """Comma-separated PROVIDERS allowlist. Empty/unset → all known providers."""
+    raw = os.environ.get("PROVIDERS")
+    if raw is None or not str(raw).strip():
+        return list(KNOWN_PROVIDERS)
+    known = set(KNOWN_PROVIDERS)
+    seen: list[str] = []
+    for part in str(raw).split(","):
+        name = part.strip().lower()
+        if name in known and name not in seen:
+            seen.append(name)
+    return seen
 
 
 def get_openrouter_base_url() -> str:
@@ -2434,9 +2456,13 @@ def build_opencode_go_wallet(probe: dict[str, Any] | None) -> dict[str, Any] | N
     }
 
 
-def _probe_cache_stale(cache: dict[str, Any]) -> bool:
+def _probe_cache_stale(
+    cache: dict[str, Any],
+    required_keys: tuple[str, ...] | list[str] | None = None,
+) -> bool:
+    keys = WALLET_PROBE_KEYS if required_keys is None else tuple(required_keys)
     acc = (cache or {}).get("accounts") or {}
-    if not all(k in acc for k in WALLET_PROBE_KEYS):
+    if not all(k in acc for k in keys):
         return True
     updated = cache.get("updated_at")
     if not updated:
@@ -2448,49 +2474,83 @@ def _probe_cache_stale(cache: dict[str, Any]) -> bool:
         return True
 
 
+_PROVIDER_PROBE_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("deepseek", "probe_deepseek_balance", "deepseek-balance-probe"),
+    ("openrouter", "probe_openrouter_wallet", "openrouter-wallet-probe"),
+    ("zai", "probe_zai_quota", "zai-quota-probe"),
+    ("commandcode", "probe_commandcode_credits", "commandcode-credits-probe"),
+    ("kimi", "probe_kimi_usage", "kimi-usage-probe"),
+    ("opencode-go", "probe_opencode_go_usage", "opencode-go-usage-probe"),
+)
+
+_PROVIDER_NOTES: tuple[tuple[str, str], ...] = (
+    (
+        "deepseek",
+        "DeepSeek wallet: balance only; 24h/7d spend from local snapshots (no usage history API); no per-model breakdown.",
+    ),
+    (
+        "openrouter",
+        "OpenRouter wallet: account credits + rolling 24h/7d from snapshots; per-model from GET /api/v1/activity (management key).",
+    ),
+    (
+        "zai",
+        "Z.AI wallet: short session + weekly token limits + MCP; 24h/7d from weekly currentValue snapshots; no per-model.",
+    ),
+    (
+        "commandcode",
+        "Command Code wallet: monthly remaining credits + 5h/weekly rolling windows; 24h/7d from monthly remaining snapshots; no per-model.",
+    ),
+    (
+        "kimi",
+        "Kimi Coding wallet: weekly request quota + rolling 5h window; 24h/7d from weekly.used snapshots; no per-model.",
+    ),
+    (
+        "opencode-go",
+        "OpenCode Go wallet: monthly remaining + 5h/weekly windows from /zen/go/v1/usage; 24h/7d from monthly used_usd snapshots; no per-model.",
+    ),
+)
+
+
+def _wallet_builders() -> dict[str, Any]:
+    return {
+        "deepseek": build_deepseek_wallet,
+        "openrouter": build_openrouter_wallet,
+        "zai": build_zai_wallet,
+        "commandcode": build_commandcode_wallet,
+        "kimi": build_kimi_wallet,
+        "opencode-go": build_opencode_go_wallet,
+    }
+
+
 def collect_state(force_quota: bool = False) -> dict[str, Any]:
     errors: list[str] = []
+    enabled = get_enabled_providers()
+    enabled_set = set(enabled)
+    required_keys = tuple(f"{name}-main" for name in enabled)
+    builders = _wallet_builders()
+    missing = [name for name in KNOWN_PROVIDERS if name not in builders]
+    extra = [name for name in builders if name not in KNOWN_PROVIDERS]
+    if missing or extra:
+        raise RuntimeError(f"provider builder map mismatch: missing={missing} extra={extra}")
+    probe_names = tuple(spec[0] for spec in _PROVIDER_PROBE_SPECS)
+    if probe_names != KNOWN_PROVIDERS:
+        raise RuntimeError(f"provider probe spec mismatch: {probe_names}")
+
     with _quota_lock:
         global _quota_cache
-        need_probe = force_quota or _probe_cache_stale(_quota_cache)
+        need_probe = force_quota or _probe_cache_stale(_quota_cache, required_keys)
         if need_probe:
             probed: dict[str, Any] = {}
-            try:
-                ds_result = probe_deepseek_balance()
-                if ds_result is not None:
-                    probed["deepseek-main"] = ds_result
-            except Exception as e:
-                errors.append(f"deepseek-balance-probe: {e}")
-            try:
-                or_result = probe_openrouter_wallet()
-                if or_result is not None:
-                    probed["openrouter-main"] = or_result
-            except Exception as e:
-                errors.append(f"openrouter-wallet-probe: {e}")
-            try:
-                zai_result = probe_zai_quota()
-                if zai_result is not None:
-                    probed["zai-main"] = zai_result
-            except Exception as e:
-                errors.append(f"zai-quota-probe: {e}")
-            try:
-                cc_result = probe_commandcode_credits()
-                if cc_result is not None:
-                    probed["commandcode-main"] = cc_result
-            except Exception as e:
-                errors.append(f"commandcode-credits-probe: {e}")
-            try:
-                kimi_result = probe_kimi_usage()
-                if kimi_result is not None:
-                    probed["kimi-main"] = kimi_result
-            except Exception as e:
-                errors.append(f"kimi-usage-probe: {e}")
-            try:
-                og_result = probe_opencode_go_usage()
-                if og_result is not None:
-                    probed["opencode-go-main"] = og_result
-            except Exception as e:
-                errors.append(f"opencode-go-usage-probe: {e}")
+            for name, fn_name, err_label in _PROVIDER_PROBE_SPECS:
+                if name not in enabled_set:
+                    continue
+                fn = globals()[fn_name]
+                try:
+                    result = fn()
+                    if result is not None:
+                        probed[f"{name}-main"] = result
+                except Exception as e:
+                    errors.append(f"{err_label}: {e}")
             _quota_cache = {
                 "updated_at": now_iso(),
                 "accounts": probed,
@@ -2499,27 +2559,23 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
         quota_accounts = dict((_quota_cache or {}).get("accounts") or {})
 
     wallets: dict[str, Any] = {}
-    deepseek_wallet = build_deepseek_wallet(quota_accounts.get("deepseek-main"))
-    openrouter_wallet = build_openrouter_wallet(quota_accounts.get("openrouter-main"))
-    zai_wallet = build_zai_wallet(quota_accounts.get("zai-main"))
-    commandcode_wallet = build_commandcode_wallet(quota_accounts.get("commandcode-main"))
-    kimi_wallet = build_kimi_wallet(quota_accounts.get("kimi-main"))
-    opencode_go_wallet = build_opencode_go_wallet(quota_accounts.get("opencode-go-main"))
-    if deepseek_wallet:
-        wallets["deepseek"] = deepseek_wallet
-    if openrouter_wallet:
-        wallets["openrouter"] = openrouter_wallet
-    if zai_wallet:
-        wallets["zai"] = zai_wallet
-    if commandcode_wallet:
-        wallets["commandcode"] = commandcode_wallet
-    if kimi_wallet:
-        wallets["kimi"] = kimi_wallet
-    if opencode_go_wallet:
-        wallets["opencode-go"] = opencode_go_wallet
+    for name in enabled:
+        builder = builders.get(name)
+        if builder is None:
+            raise RuntimeError(f"unknown provider {name}")
+        wallet = builder(quota_accounts.get(f"{name}-main"))
+        if wallet:
+            wallets[name] = wallet
+
+    notes = [text for name, text in _PROVIDER_NOTES if name in enabled_set]
+    notes.append(
+        f"Usage windows: last {USAGE_WINDOW_HOURS}h and {USAGE_WINDOW_7D_HOURS}h (7d)."
+    )
 
     return {
         "updated_at": now_iso(),
+        "site_title": get_site_title(),
+        "enabled_providers": list(enabled),
         "providers": {
             "wallets": {
                 "label": "Wallets",
@@ -2531,15 +2587,7 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
         "accounts": [],
         "wallets": wallets,
         "errors": errors,
-        "notes": [
-            "DeepSeek wallet: balance only; 24h/7d spend from local snapshots (no usage history API); no per-model breakdown.",
-            "OpenRouter wallet: account credits + rolling 24h/7d from snapshots; 8-day spend_series_7d sparkline; per-model from GET /api/v1/activity (management key).",
-            "Z.AI wallet: short session + weekly token limits + MCP; 24h/7d from weekly currentValue snapshots; no per-model.",
-            "Command Code wallet: monthly remaining credits + 5h/weekly rolling windows; 24h/7d from monthly remaining snapshots; no per-model.",
-            "Kimi Coding wallet: weekly request quota + rolling 5h window; 24h/7d from weekly.used snapshots; no per-model.",
-            "OpenCode Go wallet: monthly remaining + 5h/weekly windows from /zen/go/v1/usage; 24h/7d from monthly used_usd snapshots; no per-model.",
-            f"Usage windows: last {USAGE_WINDOW_HOURS}h and {USAGE_WINDOW_7D_HOURS}h (7d).",
-        ],
+        "notes": notes,
     }
 
 
@@ -2595,8 +2643,29 @@ def health() -> dict[str, Any]:
 
 @app.get("/api/summary")
 def summary() -> dict[str, Any]:
+    enabled = get_enabled_providers()
+    enabled_set = set(enabled)
     with _lock:
-        return json.loads(json.dumps(_state))
+        data = json.loads(json.dumps(_state))
+    data["site_title"] = get_site_title()
+    data["enabled_providers"] = list(enabled)
+    wallets = data.get("wallets") if isinstance(data.get("wallets"), dict) else {}
+    data["wallets"] = {key: wallets[key] for key in enabled if key in wallets}
+    providers = data.get("providers") if isinstance(data.get("providers"), dict) else {}
+    wallets_meta = providers.get("wallets") if isinstance(providers.get("wallets"), dict) else None
+    if wallets_meta is not None:
+        wallets_meta["keys"] = list(data["wallets"].keys())
+        providers["wallets"] = wallets_meta
+        data["providers"] = providers
+    notes = data.get("notes")
+    if isinstance(notes, list) and enabled_set != set(KNOWN_PROVIDERS):
+        keep = {text for name, text in _PROVIDER_NOTES if name in enabled_set}
+        data["notes"] = [
+            note
+            for note in notes
+            if note in keep or str(note).startswith("Usage windows:")
+        ]
+    return data
 
 
 @app.get("/api/accounts")
@@ -2635,11 +2704,19 @@ def refresh() -> dict[str, Any]:
 
 
 @app.get("/")
-def index() -> FileResponse:
+def index() -> HTMLResponse:
     path = STATIC_DIR / "index.html"
     if not path.exists():
         raise HTTPException(status_code=404, detail="index.html missing")
-    return FileResponse(path)
+    text = path.read_text(encoding="utf-8")
+    title = html_lib.escape(get_site_title(), quote=False)
+    text = text.replace(
+        "<title>Мои подписки · raclaw</title>",
+        f"<title>{title} · raclaw</title>",
+        1,
+    )
+    text = text.replace("<h1>Мои подписки</h1>", f"<h1>{title}</h1>", 1)
+    return HTMLResponse(text)
 
 
 @app.get("/favicon.ico")
