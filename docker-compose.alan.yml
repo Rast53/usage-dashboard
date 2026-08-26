@@ -1,0 +1,43 @@
+# Dockhand autodeploy on tw-msk-server — инстанс для Алана (TASK-alan-usage-page).
+# Тот же образ/код, что у основного стека, но: PROVIDERS=opencode-go, свой volume,
+# traefik usage.alan.ragpt.ru БЕЗ basicauth (явное решение Ивана 2026-08-25).
+# Ключ Алана — только в Dockhand stack env (is_secret=1). Never commit keys.
+services:
+  usage-dashboard:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - /opt/usage-dashboard-alan/data:/app/data
+    environment:
+      - USAGE_PORT=${USAGE_PORT:-3210}
+      - USAGE_POLL_SECONDS=${USAGE_POLL_SECONDS:-60}
+      - USAGE_WINDOW_HOURS=${USAGE_WINDOW_HOURS:-24}
+      - USAGE_QUOTA_PROBE_SECONDS=${USAGE_QUOTA_PROBE_SECONDS:-300}
+      - USAGE_DATA_DIR=/app/data
+      - USAGE_STATIC_DIR=/app/static
+      - PROVIDERS=${PROVIDERS:-opencode-go}
+      - SITE_TITLE=${SITE_TITLE:-OpenCode Go — Алан}
+      - OPENCODE_GO_API_KEY=${OPENCODE_GO_API_KEY:-}
+      # Optional: HTTP CONNECT / SOCKS5(h) if opencode.ai is blocked from the container.
+      - OPENCODE_GO_PROXY=${OPENCODE_GO_PROXY:-}
+      - OPENCODE_GO_BASE_URL=${OPENCODE_GO_BASE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - traefik-net
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik-net
+      traefik.http.routers.usage-alan-http.rule: Host(`usage.alan.ragpt.ru`)
+      traefik.http.routers.usage-alan-http.entrypoints: web
+      traefik.http.routers.usage-alan-http.middlewares: redirect-to-https@file
+      traefik.http.routers.usage-alan-secure.rule: Host(`usage.alan.ragpt.ru`)
+      traefik.http.routers.usage-alan-secure.entrypoints: websecure
+      traefik.http.routers.usage-alan-secure.tls: "true"
+      traefik.http.routers.usage-alan-secure.tls.certresolver: letsencrypt
+      # БЕЗ basicauth — публичная страница (только security headers)
+      traefik.http.routers.usage-alan-secure.middlewares: security-headers@file
+      traefik.http.services.usage-alan.loadbalancer.server.port: "3210"
+networks:
+  traefik-net:
+    external: true
