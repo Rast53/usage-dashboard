@@ -462,14 +462,11 @@ class UiCopyTest(unittest.TestCase):
         self.assertIn("sparklineSvg", html)
         self.assertIn("allotmentBar", html)
         self.assertIn("По моделям", html)
-<<<<<<< HEAD
         self.assertIn("fonts.googleapis.com", html)
         self.assertIn("family=Inter", html)
         self.assertNotRegex(html, r"<script[^>]+src=")
-=======
         self.assertIn("applySiteTitle", html)
         self.assertIn("sourceLabels", html)
->>>>>>> 65bec7e (test: фильтрация PROVIDERS, summary, рендер-контракт и скриншоты)
         self.assertNotRegex(html, r"(?i)cpa|USAGE_PG_DSN|psycopg2")
 
 

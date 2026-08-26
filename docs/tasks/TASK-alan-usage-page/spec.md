@@ -4,7 +4,7 @@
 
 ## Проблема
 
-Нужен второй инстанс того же образа на tw-msk: https://alan.ragpt.ru — только карточка **OpenCode Go** с ключом Алана, без basicauth (решение Ивана). Основной https://usage.ragpt.ru не трогать. Сейчас дашборд всегда пробит и рендерит все 6 провайдеров; hero пишет «из 6 провайдеров» / список всех источников даже если жив один ключ.
+Нужен второй инстанс того же образа на tw-msk: https://usage.alan.ragpt.ru — только карточка **OpenCode Go** с ключом Алана, без basicauth (решение Ивана). Основной https://usage.ragpt.ru не трогать. Сейчас дашборд всегда пробит и рендерит все 6 провайдеров; hero пишет «из 6 провайдеров» / список всех источников даже если жив один ключ.
 
 ## Цель
 
@@ -18,23 +18,23 @@
 
 ## Non-goals
 
-- Деплой второго контейнера / Traefik `alan.ragpt.ru` / Dockhand secret (ops hermes-chuwi **после merge**, отдельным шагом).
+- Деплой второго контейнера / Traefik `usage.alan.ragpt.ru` / Dockhand secret (ops hermes-chuwi **после merge**, отдельным шагом).
 - Менять основной инстанс usage.ragpt.ru (не задавать там `PROVIDERS`/`SITE_TITLE`).
-- Basicauth на alan.ragpt.ru (явно без него).
+- Basicauth на usage.alan.ragpt.ru (явно без него).
 
 ## Ops (после merge, не эта ветка)
 
 Второй контейнер из того же образа на tw-msk:
 
 - env: `PROVIDERS=opencode-go`, `SITE_TITLE=OpenCode Go — Алан`, `OPENCODE_GO_API_KEY` = ключ Алана (Dockhand secret, не git)
-- traefik: `alan.ragpt.ru` → этот контейнер, **без** `tasks-basicauth@file`
+- traefik: `usage.alan.ragpt.ru` → этот контейнер, **без** `tasks-basicauth@file`
 - volume отдельный (не `/opt/usage-dashboard/data` основного стека)
 - основной usage.ragpt.ru не трогать
 
 ## Acceptance
 
 1. PR: `PROVIDERS`/`SITE_TITLE` работают; тесты зелёные (старые + новые); скриншоты страницы с одной карточкой (desktop+mobile).
-2. После merge и deploy: https://alan.ragpt.ru открывается без логина, только OpenCode Go с данными ключа Алана; `/api/summary` без ключей; usage.ragpt.ru не изменился.
+2. После merge и deploy: https://usage.alan.ragpt.ru открывается без логина, только OpenCode Go с данными ключа Алана; `/api/summary` без ключей; usage.ragpt.ru не изменился.
 
 ## Contracts
 

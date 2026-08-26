@@ -274,7 +274,8 @@ class RenderContractTest(unittest.TestCase):
         )
         self.assertNotIn("из 6 провайдеров", html)
         self.assertIn("renderOpenrouterCard", html)
-        self.assertIn("renderModelsBlock", html)
+        self.assertIn("renderModelsSection", html)
+        self.assertIn("models-label", html)
         self.assertIn("CARD_ORDER", html)
         self.assertIn("opencode-go-card", html)
 

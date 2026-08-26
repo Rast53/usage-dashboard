@@ -207,7 +207,7 @@
     <div class="section-label">Провайдеры</div>
     <div class="card-grid" id="providers"></div>
 
-    <div class="section-label">По моделям · OpenRouter · 7д</div>
+    <div class="section-label" id="models-label">По моделям · OpenRouter · 7д</div>
     <div class="models-block" id="models"></div>
   </div>
 
@@ -861,7 +861,11 @@ async function load() {
       return render ? render(wallets[key]) : '';
     }).filter(Boolean).join('');
     document.getElementById('providers').innerHTML = providerCards || '<div class="muted">Нет данных</div>';
-    document.getElementById('models').innerHTML = renderModelsSection(wallets.openrouter);
+    const hasOpenrouter = !!wallets.openrouter;
+    document.getElementById('models-label').style.display = hasOpenrouter ? '' : 'none';
+    const modelsEl = document.getElementById('models');
+    modelsEl.style.display = hasOpenrouter ? '' : 'none';
+    modelsEl.innerHTML = renderModelsSection(wallets.openrouter);
     applyExpandedIds(expanded);
   } catch(e) {
     document.getElementById('errors').innerHTML = '<div class="err">Ошибка загрузки: ' + escapeHtml(e.message) + '</div>';

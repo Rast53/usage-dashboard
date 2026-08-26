@@ -3,7 +3,7 @@
 | Дата | Шаг | Статус | Комментарий |
 |---|---|---|---|
 | 2026-08-25 | Создана | ✅ | Из пакета cloud-agent (spec отсутствовал в репо) |
-| 2026-08-25 | Spec + plan | ✅ | materialize; ops alan.ragpt.ru — после merge |
+| 2026-08-25 | Spec + plan | ✅ | materialize; ops usage.alan.ragpt.ru — после merge |
 | 2026-08-25 | PROVIDERS / SITE_TITLE | ✅ | allowlist + заголовок; пустой env = все 6 |
 | 2026-08-25 | UI hero collapse | ✅ | «из 1 провайдера» / 1/1 OpenCode Go; без хардкода 6 имён |
 | 2026-08-25 | Tests | ✅ | `python3 -m unittest discover -s tests -q` — 73 passed |
@@ -12,7 +12,7 @@
 
 ## Actual
 
-Cursor cloud-agent: env-конфиг инстанса (`PROVIDERS`, `SITE_TITLE`). Оценка S. Ops (второй контейнер, traefik alan.ragpt.ru без basicauth, secret ключа Алана) — отдельным шагом.
+Cursor cloud-agent: env-конфиг инстанса (`PROVIDERS`, `SITE_TITLE`). Оценка S. Ops (второй контейнер, traefik usage.alan.ragpt.ru без basicauth, secret ключа Алана) — отдельным шагом.
 
 Sources used:
 - AGENTMAP.md — нет в корне Rast53/usage-dashboard (репо не публикует указатель)
