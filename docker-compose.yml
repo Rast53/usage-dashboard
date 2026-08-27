@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     volumes:
       - /opt/usage-dashboard/data:/app/data
+      - /opt/usage-dashboard/export:/app/export
     environment:
       - USAGE_PORT=${USAGE_PORT:-3210}
       - USAGE_POLL_SECONDS=${USAGE_POLL_SECONDS:-60}
@@ -22,6 +23,8 @@ services:
       - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-http://100.69.177.71:8444}
       - OPENROUTER_PROXY=${OPENROUTER_PROXY:-}
       - OPENROUTER_SSL_NO_VERIFY=${OPENROUTER_SSL_NO_VERIFY:-1}
+      - OPENROUTER_TRACKED_KEY_HASH=${OPENROUTER_TRACKED_KEY_HASH:-}
+      - OPENROUTER_EXPORT_PATH=${OPENROUTER_EXPORT_PATH:-/app/export/openrouter_key_models.json}
       - ZAI_API_KEY=${ZAI_API_KEY:-}
       # Direct docker egress to api.z.ai from tw-msk fails; HTTP CONNECT / SOCKS5(h).
       # Userinfo is a secret — set ZAI_PROXY in Dockhand stack env (is_secret). Never commit.
