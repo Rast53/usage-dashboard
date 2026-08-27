@@ -304,6 +304,11 @@ def get_openrouter_ssl_verify() -> bool:
     return not _env_flag("OPENROUTER_SSL_NO_VERIFY", default=False)
 
 
+def openrouter_key_only() -> bool:
+    """OPENROUTER_KEY_ONLY=1 → GET /api/v1/key only; no credits/keys/activity."""
+    return _env_flag("OPENROUTER_KEY_ONLY", default=False)
+
+
 def openrouter_api_url(path: str) -> str:
     if not path.startswith("/"):
         path = "/" + path
@@ -718,6 +723,43 @@ def aggregate_openrouter_models(
     }
 
 
+def _openrouter_key_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "label": payload.get("label"),
+        "usage": payload.get("usage"),
+        "usage_daily": payload.get("usage_daily"),
+        "usage_weekly": payload.get("usage_weekly"),
+        "usage_monthly": payload.get("usage_monthly"),
+        "limit": payload.get("limit"),
+        "limit_remaining": payload.get("limit_remaining"),
+        "is_free_tier": payload.get("is_free_tier"),
+    }
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _openrouter_key_remaining_summary(key: dict[str, Any]) -> str:
+    """Spend-only summary for key-only mode. Never includes account remaining/credits."""
+    parts: list[str] = []
+    daily = _float_or_none(key.get("usage_daily"))
+    weekly = _float_or_none(key.get("usage_weekly"))
+    monthly = _float_or_none(key.get("usage_monthly"))
+    if daily is not None:
+        parts.append(f"−${daily:.2f} today (UTC, key)")
+    if weekly is not None:
+        parts.append(f"−${weekly:.2f} week")
+    if monthly is not None:
+        parts.append(f"−${monthly:.2f} month")
+    return " · ".join(parts)
+
+
 def probe_openrouter_wallet() -> dict[str, Any]:
     """Fetch OpenRouter account credits + key usage.
 
@@ -752,6 +794,27 @@ def probe_openrouter_wallet() -> dict[str, Any]:
         "proxy": redact_proxy_url(proxy),
         "ssl_verify": ssl_verify,
     }
+
+    if openrouter_key_only():
+        st2, _h2, data2, err2 = http_json(
+            openrouter_api_url("/api/v1/key"),
+            token=key,
+            proxy=proxy,
+            timeout=15.0,
+            ssl_verify=ssl_verify,
+        )
+        if st2 != 200 or not isinstance(data2, dict):
+            result["error"] = f"key API: {st2} {err2 or data2}".strip()
+            return result
+        kpayload = data2.get("data") if isinstance(data2.get("data"), dict) else data2
+        if not isinstance(kpayload, dict):
+            result["error"] = f"key parse failed: {data2}"
+            return result
+        result["ok"] = True
+        result["kind"] = "openrouter-key"
+        result["key"] = _openrouter_key_from_payload(kpayload)
+        result["remaining_summary"] = _openrouter_key_remaining_summary(result["key"])
+        return result
 
     st, _hdrs, data, err = http_json(
         openrouter_api_url("/api/v1/credits"),
@@ -789,16 +852,7 @@ def probe_openrouter_wallet() -> dict[str, Any]:
     )
     if st2 == 200 and isinstance(data2, dict):
         kpayload = data2.get("data") if isinstance(data2.get("data"), dict) else data2
-        result["key"] = {
-            "label": kpayload.get("label"),
-            "usage": kpayload.get("usage"),
-            "usage_daily": kpayload.get("usage_daily"),
-            "usage_weekly": kpayload.get("usage_weekly"),
-            "usage_monthly": kpayload.get("usage_monthly"),
-            "limit": kpayload.get("limit"),
-            "limit_remaining": kpayload.get("limit_remaining"),
-            "is_free_tier": kpayload.get("is_free_tier"),
-        }
+        result["key"] = _openrouter_key_from_payload(kpayload)
     elif err2:
         result["key_error"] = f"key API: {st2} {err2}"
 
@@ -941,10 +995,14 @@ def compute_openrouter_spend_7d(current_total_usage: float | None) -> dict[str, 
 def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] | None:
     if not or_probe:
         return None
-    spend = compute_openrouter_spend_24h(or_probe.get("total_usage"))
-    spend_7d = compute_openrouter_spend_7d(or_probe.get("total_usage"))
     key = or_probe.get("key") or {}
-    keys = or_probe.get("keys") or []
+    key_only = openrouter_key_only()
+    keys = [] if key_only else (or_probe.get("keys") or [])
+    total_usage = or_probe.get("total_usage")
+    if key_only:
+        total_usage = _float_or_none(key.get("usage"))
+    spend = compute_openrouter_spend_24h(total_usage)
+    spend_7d = compute_openrouter_spend_7d(total_usage)
     daily = key.get("usage_daily")
     try:
         daily_f = float(daily) if daily is not None else None
@@ -953,7 +1011,7 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
 
     # Sum usage_daily across management keys when available (= account-ish today UTC)
     keys_daily = None
-    if keys:
+    if keys and not key_only:
         try:
             keys_daily = round(sum(float(k.get("usage_daily") or 0) for k in keys), 6)
         except Exception:
@@ -973,7 +1031,12 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
         else:
             spent_summary = f"{spend.get('spent_summary')} · key today −${daily_f:.2f}"
 
-    remaining = or_probe.get("remaining")
+    remaining = None if key_only else or_probe.get("remaining")
+    remaining_summary = (
+        _openrouter_key_remaining_summary(key)
+        if key_only
+        else (or_probe.get("remaining_summary") or "")
+    )
     models = or_probe.get("models")
     if not isinstance(models, dict):
         models = models_unavailable("GET /api/v1/activity требует management key")
@@ -984,10 +1047,10 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
         "kind": "wallet-credits",
         "status": "active" if or_probe.get("ok") else "error",
         "ok": bool(or_probe.get("ok")),
-        "total_credits": or_probe.get("total_credits"),
-        "total_usage": or_probe.get("total_usage"),
+        "total_credits": None if key_only else or_probe.get("total_credits"),
+        "total_usage": total_usage,
         "remaining": remaining,
-        "remaining_summary": or_probe.get("remaining_summary") or "",
+        "remaining_summary": remaining_summary,
         "key": key,
         "keys": keys,
         "usage_daily": daily_f,
@@ -998,10 +1061,14 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
         "probed_at": or_probe.get("probed_at"),
         "spend_24h": spend,
         "spend_7d": spend_7d,
-        "spend_series_7d": compute_openrouter_spend_series_7d(or_probe.get("total_usage")),
+        "spend_series_7d": compute_openrouter_spend_series_7d(total_usage),
         "spent_summary": spent_summary,
         "models": models,
-        "source": "openrouter-credits-api+local-snapshots",
+        "source": (
+            "openrouter-key-api+local-snapshots"
+            if key_only
+            else "openrouter-credits-api+local-snapshots"
+        ),
         "via": or_probe.get("via"),
     }
 

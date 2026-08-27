@@ -289,6 +289,12 @@ function classify(item) {
     if (rem != null) {
       if (rem < 0.5) return 'critical';
       if (rem < 2) return 'warn';
+      return 'ok';
+    }
+    const keyLim = (item.key || {}).limit_remaining;
+    if (keyLim != null) {
+      if (Number(keyLim) < 0.5) return 'critical';
+      if (Number(keyLim) < 2) return 'warn';
     }
     return 'ok';
   }
@@ -430,6 +436,22 @@ function allotmentBar(label, lim, windowName) {
 function heroFor(w) {
   const p = w.provider;
   if (p === 'openrouter') {
+    if (openrouterIsKeyOnly(w)) {
+      const key = w.key || {};
+      if (key.limit_remaining != null) {
+        return {
+          value: '$' + money(key.limit_remaining),
+          caption: key.limit != null ? ('из $' + money(key.limit) + ' лимита ключа') : 'лимит ключа',
+          plan: key.label || 'key',
+        };
+      }
+      const daily = w.usage_daily != null ? w.usage_daily : key.usage_daily;
+      return {
+        value: daily != null ? ('−$' + money(daily)) : '—',
+        caption: 'сегодня (UTC, key)',
+        plan: key.label || 'key',
+      };
+    }
     return {
       value: w.remaining != null ? ('$' + money(w.remaining)) : '—',
       caption: w.total_credits != null ? ('из $' + money(w.total_credits) + ' кредитов') : 'кредиты OpenRouter',
@@ -498,6 +520,40 @@ function planBadge(w, plan, st) {
   const tone = st === 'critical' ? 'bad' : st === 'warn' ? 'warn' : 'ok';
   return '<span class="badge plan">' + escapeHtml(plan || 'plan') + '</span>' +
     '<span class="badge ' + tone + '">' + (st === 'critical' ? 'crit' : st === 'warn' ? 'warn' : 'ok') + '</span>';
+}
+
+function openrouterIsKeyOnly(w) {
+  return !!(w && w.ok && w.total_credits == null && w.remaining == null);
+}
+
+function openrouterKeyLiveChips(w) {
+  if (!openrouterIsKeyOnly(w)) return '';
+  const key = w.key || {};
+  const daily = w.usage_daily != null ? w.usage_daily : key.usage_daily;
+  const weekly = w.usage_weekly != null ? w.usage_weekly : key.usage_weekly;
+  const monthly = w.usage_monthly != null ? w.usage_monthly : key.usage_monthly;
+  let html = '';
+  if (daily != null) html += '<span class="chip">сегодня −$' + money(daily) + '</span>';
+  if (weekly != null) html += '<span class="chip">нед −$' + money(weekly) + '</span>';
+  if (monthly != null) html += '<span class="chip">мес −$' + money(monthly) + '</span>';
+  return html;
+}
+
+function openrouterKeyLimitBar(w) {
+  if (!openrouterIsKeyOnly(w)) return '';
+  const key = w.key || {};
+  const cap = key.limit;
+  const rem = key.limit_remaining;
+  if (cap == null || rem == null || !(Number(cap) > 0)) return '';
+  const used = Number(cap) - Number(rem);
+  const usedPct = Math.max(0, Math.min(100, (used / Number(cap)) * 100));
+  const remPct = (Number(rem) / Number(cap)) * 100;
+  return allotmentBar('лимит ключа', {
+    used_percent: usedPct,
+    remaining_percent: remPct,
+    remaining_usd: rem,
+    cap: cap,
+  }, 'ключ');
 }
 
 function openrouterCreditsBar(w) {
@@ -574,6 +630,27 @@ function detailsDeepseek(w) {
 }
 
 function detailsOpenrouter(w) {
+  if (openrouterIsKeyOnly(w)) {
+    const key = w.key || {};
+    const daily = w.usage_daily != null ? w.usage_daily : key.usage_daily;
+    const weekly = w.usage_weekly != null ? w.usage_weekly : key.usage_weekly;
+    const monthly = w.usage_monthly != null ? w.usage_monthly : key.usage_monthly;
+    let html = '<div class="details-section">Ключ</div>';
+    if (key.label) {
+      html += '<div class="details-row"><span>label</span><span>' + escapeHtml(String(key.label)) + '</span></div>';
+    }
+    html += '<div class="details-row"><span>сегодня</span><span>$' + money(daily) + '</span></div>' +
+      '<div class="details-row"><span>неделя</span><span>$' + money(weekly) + '</span></div>' +
+      '<div class="details-row"><span>месяц</span><span>$' + money(monthly) + '</span></div>';
+    if (key.limit != null || key.limit_remaining != null) {
+      html += '<div class="details-row"><span>лимит</span><span>$' + money(key.limit_remaining) + ' / $' + money(key.limit) + '</span></div>';
+    }
+    html += renderSpendDetails(w);
+    if (w.remaining_summary) html += '<div class="details-mono">' + escapeHtml(w.remaining_summary) + '</div>';
+    html += '<div class="details-src">источник: GET /api/v1/key (key-only)</div>';
+    if (w.error) html += '<div class="details-src bad-text">' + escapeHtml(w.error) + '</div>';
+    return html;
+  }
   const keys = w.keys || [];
   let keysHtml = '';
   if (keys.length) {
@@ -606,13 +683,16 @@ function renderProviderCard(w, spec) {
   if (!w) return '';
   const st = classify(w);
   const hero = heroFor(w);
-  const chips = spendChip('24ч', w.spend_24h) + spendChip('7д', w.spend_7d);
+  const chips = spendChip('24ч', w.spend_24h) + spendChip('7д', w.spend_7d) + (spec.prov === 'openrouter' ? openrouterKeyLiveChips(w) : '');
   const spark = sparklineSvg(w.spend_series_7d);
   let bars = '';
   (spec.windows || []).forEach(function(win) {
     bars += allotmentBar(win.label, w[win.key] || {}, win.window);
   });
-  if (spec.creditsBar) bars += openrouterCreditsBar(w);
+  if (spec.creditsBar) {
+    bars += openrouterCreditsBar(w);
+    bars += openrouterKeyLimitBar(w);
+  }
   const errLine = (!w.ok && w.error)
     ? '<div class="bar-sub ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>'
     : '';
@@ -691,8 +771,9 @@ function renderDeepseekCard(w) {
   });
 }
 function renderOpenrouterCard(w) {
+  const title = openrouterIsKeyOnly(w) ? 'OpenRouter · key' : 'OpenRouter · credits';
   return renderProviderCard(w, {
-    id: 'openrouter-card', prov: 'openrouter', title: 'OpenRouter · credits',
+    id: 'openrouter-card', prov: 'openrouter', title: title,
     windows: [],
     creditsBar: true,
     details: detailsOpenrouter,

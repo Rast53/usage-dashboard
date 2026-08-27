@@ -14,6 +14,7 @@ class OpenRouterHelpersTest(unittest.TestCase):
             "OPENROUTER_SSL_NO_VERIFY",
             "OPENROUTER_API_KEY",
             "OPENROUTER_MANAGEMENT_KEY",
+            "OPENROUTER_KEY_ONLY",
         }
         return {k: v for k, v in app.os.environ.items() if k not in drop}
 
