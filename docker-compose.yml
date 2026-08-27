@@ -40,6 +40,7 @@ services:
       # Instance allowlist / title. Empty = all 6 providers, «Мои подписки».
       - PROVIDERS=${PROVIDERS:-}
       - SITE_TITLE=${SITE_TITLE:-}
+      - DISPLAY_TZ=${DISPLAY_TZ:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

@@ -1,4 +1,5 @@
-# Dockhand autodeploy on tw-msk-server — инстанс для Алана (TASK-alan-usage-page + TASK-alan-openrouter-key-card).
+# Dockhand autodeploy on tw-msk-server — инстанс для Алана
+# (TASK-alan-usage-page + TASK-alan-openrouter-key-card + TASK-alan-page-msk-time-and-labels).
 # Тот же образ/код, что у основного стека, но: PROVIDERS=opencode-go,openrouter, OPENROUTER_KEY_ONLY=1,
 # свой volume, traefik usage.alan.ragpt.ru БЕЗ basicauth (явное решение Ивана 2026-08-25).
 # Ключи Алана — только в Dockhand stack env (is_secret=1). Never commit keys.
@@ -23,6 +24,7 @@ services:
       - OPENCODE_GO_PROXY=${OPENCODE_GO_PROXY:-}
       - OPENCODE_GO_BASE_URL=${OPENCODE_GO_BASE_URL:-}
       - OPENROUTER_KEY_ONLY=${OPENROUTER_KEY_ONLY:-1}
+      - DISPLAY_TZ=${DISPLAY_TZ:-Europe/Moscow}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-http://100.69.177.71:8444}
     extra_hosts:
