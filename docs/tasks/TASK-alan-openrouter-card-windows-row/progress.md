@@ -3,18 +3,21 @@
 | Дата | Шаг | Статус | Комментарий |
 |---|---|---|---|
 | 2026-08-27 | Создана | ✅ | Из пакета cloud-agent (spec отсутствовал в репо) |
-| 2026-08-27 | Spec + plan | ⏳ | materialize |
-| 2026-08-27 | UI | ⏳ | не рендерить пустые окна вчера/7д/30д |
-| 2026-08-27 | Tests | ⏳ | |
+| 2026-08-27 | Spec + plan | ✅ | materialize; ops stack 8 — после merge |
+| 2026-08-27 | UI | ✅ | `calendarWindowFilled`: пустые вчера/7д/30д не рендерятся |
+| 2026-08-27 | Tests | ✅ | `python3 -m unittest discover -s tests -q` — 110 passed |
 | 2026-08-27 | Ops E2E | ⏳ | hermes-chuwi после merge; деплой не эта ветка |
 
 ## Actual
 
-<!-- заполняется при закрытии -->
+Cursor cloud-agent: скрытие пустой строки ВЧЕРА/7Д/30Д на карточке OpenRouter Алана. Оценка S. Деплой не делался.
 
 ## 2026-08-27 — build notes
 
-<!-- заполняется по ходу -->
+- Live usage.alan.ragpt.ru: `spend_calendar` вчера/7д/30д `spent=null` (snapshots короче полных суток МСК); таблица шла с «—» из‑за `text-transform: uppercase` как ВЧЕРА / 7 ДНЕЙ / 30 ДНЕЙ.
+- `renderSpendCalendar`: если все три окна пустые (`spent=null` или `partial`) — пустая строка, без таблицы и note. Частично заполненные — только живые колонки + Итого.
+- Backend `spend_calendar` без изменений. Чипы сутки/нед/мес UTC и hero ключа на месте. usage.ragpt.ru не зовёт таблицу (`hide_partial_spend_chips=false`).
+- Секреты не коммитились.
 
 Sources used:
 - AGENTMAP.md — нет в корне Rast53/usage-dashboard (репо не публикует указатель)
