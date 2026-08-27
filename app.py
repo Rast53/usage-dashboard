@@ -44,7 +44,6 @@ DISPLAY_TZ_UTC = "UTC"
 DISPLAY_TZ_MSK = "Europe/Moscow"
 NO_MODEL_BREAKDOWN = "нет разбивки от провайдера"
 NO_FRESH_EXPORT = "нет свежих данных экспорта"
-OPENROUTER_KEY_EXPORT_NOTE = "экспорт с аккаунта (key-only)"
 OPENROUTER_EXPORT_DEFAULT_PATH = "/app/export/openrouter_key_models.json"
 OPENROUTER_EXPORT_THROTTLE_SECONDS = 300
 OPENROUTER_IMPORT_MAX_AGE_SECONDS = 1800
@@ -762,6 +761,46 @@ def _openrouter_day_windows(now: datetime) -> dict[str, set[str]]:
     }
 
 
+def _fmt_iso_day(iso: str | None) -> str:
+    raw = str(iso or "")[:10]
+    if len(raw) < 10 or raw[4] != "-" or raw[7] != "-":
+        return "—"
+    year, month, day = raw.split("-")
+    return f"{day}.{month}"
+
+
+def _openrouter_key_window_meta(now: datetime) -> dict[str, Any]:
+    """UTC calendar windows for Alan per-model: yesterday / last 7d / last 30d."""
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+    return {
+        "tz": "UTC",
+        "yesterday": yesterday.isoformat(),
+        "days_7": {
+            "from": (today - timedelta(days=6)).isoformat(),
+            "to": today.isoformat(),
+        },
+        "days_30": {
+            "from": (today - timedelta(days=29)).isoformat(),
+            "to": today.isoformat(),
+        },
+    }
+
+
+def openrouter_key_models_note(windows: dict[str, Any] | None) -> str:
+    """Footnote with explicit UTC dates; no 'export from account' jargon."""
+    if not isinstance(windows, dict):
+        return "UTC-дни activity"
+    y = _fmt_iso_day(windows.get("yesterday") if isinstance(windows.get("yesterday"), str) else None)
+    d7 = windows.get("days_7") if isinstance(windows.get("days_7"), dict) else {}
+    d30 = windows.get("days_30") if isinstance(windows.get("days_30"), dict) else {}
+    return (
+        f"вчера {y} UTC · "
+        f"7 дней {_fmt_iso_day(d7.get('from'))}–{_fmt_iso_day(d7.get('to'))} UTC · "
+        f"30 дней {_fmt_iso_day(d30.get('from'))}–{_fmt_iso_day(d30.get('to'))} UTC"
+    )
+
+
 def aggregate_openrouter_models(
     items: list[Any],
     now: datetime | None = None,
@@ -816,9 +855,15 @@ def aggregate_openrouter_key_models(
     items: list[Any],
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Per-key activity rows → export contract (24h / 7d / 30d UTC calendar days)."""
+    """Per-key activity rows → export contract (yesterday / 7d / 30d UTC calendar days).
+
+    `usage_24h` keeps the schema-1 field name and means yesterday (completed UTC day),
+    not today+yesterday. Account-wide `aggregate_openrouter_models` is unchanged.
+    """
     now = now or datetime.now(timezone.utc)
     windows = _openrouter_day_windows(now)
+    meta = _openrouter_key_window_meta(now)
+    yesterday = meta["yesterday"]
     by_model: dict[str, dict[str, Any]] = {}
     for it in items:
         if not isinstance(it, dict):
@@ -840,7 +885,7 @@ def aggregate_openrouter_key_models(
                 "requests_7d": 0,
             },
         )
-        if day in windows["24h"]:
+        if day == yesterday:
             bucket["usage_24h"] += usage
             bucket["requests_24h"] += requests
         if day in windows["7d"]:
@@ -862,6 +907,7 @@ def aggregate_openrouter_key_models(
             "usage_7d": round(sum(float(row["usage_7d"]) for row in models), 6),
             "usage_30d": round(sum(float(row["usage_30d"]) for row in models), 6),
         },
+        "windows": meta,
     }
 
 
@@ -879,6 +925,7 @@ def _openrouter_export_skeleton(
     models: list[dict[str, Any]],
     totals: dict[str, Any],
     last_error: str | None = None,
+    windows: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "schema": 1,
@@ -891,6 +938,8 @@ def _openrouter_export_skeleton(
             "usage_30d": float(totals.get("usage_30d") or 0),
         },
     }
+    if isinstance(windows, dict) and windows:
+        payload["windows"] = windows
     if last_error:
         payload["last_error"] = last_error
     return payload
@@ -913,6 +962,7 @@ def _write_openrouter_export_error(path: Path, suffix: str, err: str) -> None:
     prev_suffix = prev.get("key_label_hash_suffix")
     if isinstance(prev_suffix, str) and prev_suffix:
         suffix = prev_suffix
+    prev_windows = prev.get("windows") if isinstance(prev.get("windows"), dict) else None
     atomic_write_json(
         path,
         _openrouter_export_skeleton(
@@ -921,6 +971,7 @@ def _write_openrouter_export_error(path: Path, suffix: str, err: str) -> None:
             models=[row for row in models if isinstance(row, dict)],
             totals=totals,
             last_error=err,
+            windows=prev_windows,
         ),
     )
 
@@ -990,6 +1041,7 @@ def maybe_export_openrouter_key_models(
                     suffix=suffix,
                     models=rolled["models"],
                     totals=rolled["totals"],
+                    windows=rolled.get("windows"),
                 ),
             )
     except Exception as exc:
@@ -1047,6 +1099,12 @@ def models_from_openrouter_key_export(payload: dict[str, Any]) -> dict[str, Any]
     items.sort(key=lambda row: float(row["usage"]), reverse=True)
     items_24h.sort(key=lambda row: float(row["usage"]), reverse=True)
     totals = payload.get("totals") if isinstance(payload.get("totals"), dict) else {}
+    windows = payload.get("windows") if isinstance(payload.get("windows"), dict) else None
+    if not windows:
+        ts = _parse_export_updated_at(payload.get("updated_at"))
+        if ts is not None and ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        windows = _openrouter_key_window_meta(ts or datetime.now(timezone.utc))
     return {
         "available": True,
         "source": "openrouter-key-export",
@@ -1055,7 +1113,8 @@ def models_from_openrouter_key_export(payload: dict[str, Any]) -> dict[str, Any]
         "reason": None,
         "items": items,
         "items_24h": items_24h,
-        "note": OPENROUTER_KEY_EXPORT_NOTE,
+        "windows": windows,
+        "note": openrouter_key_models_note(windows),
         "totals": {
             "usage_24h": round(float(totals.get("usage_24h") or 0), 6),
             "usage_7d": round(float(totals.get("usage_7d") or 0), 6),
@@ -2054,12 +2113,15 @@ def compute_openrouter_calendar_spend(
         ),
     }
     total_spent = _float_or_none(current_total_usage)
+    days_7 = _calendar_window(points, 7)
+    days_30 = _calendar_window(points, 30)
+    y_date = yesterday.get("date")
     return {
         "tz": DISPLAY_TZ_MSK,
         "tz_label": "МСК",
         "yesterday": yesterday,
-        "days_7": _calendar_window(points, 7),
-        "days_30": _calendar_window(points, 30),
+        "days_7": days_7,
+        "days_30": days_30,
         "total": {
             "spent": total_spent,
             "partial": False,
@@ -2067,8 +2129,11 @@ def compute_openrouter_calendar_spend(
             "source": "key.usage",
         },
         "note": (
-            "полные сутки МСК (UTC+3); сегодняшние неполные сутки не входят. "
-            "Итого — расход ключа за всё время. Окна OpenRouter API "
+            f"вчера {_fmt_iso_day(y_date)}; "
+            f"7 дней {_fmt_iso_day(days_7.get('from'))}–{_fmt_iso_day(days_7.get('to'))}; "
+            f"30 дней {_fmt_iso_day(days_30.get('from'))}–{_fmt_iso_day(days_30.get('to'))} "
+            "— полные сутки МСК (UTC+3); сегодняшние неполные сутки не входят. "
+            "Всего — расход ключа за всё время. Окна OpenRouter API "
             "(сутки / неделя пн–вс / месяц) — UTC."
         ),
     }
