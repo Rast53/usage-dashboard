@@ -176,6 +176,20 @@
   table.models td.model { font-family: var(--mono); font-size: 12px; }
   table.models tr:last-child td { border-bottom: 0; }
   .models-note { font-size: 12px; color: var(--muted); padding: 12px 14px; }
+  .cal-wrap { margin: 0 0 12px; }
+  table.cal {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+  }
+  table.cal th {
+    color: var(--muted); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.04em; font-weight: 600; text-align: right;
+    padding: 4px 8px 6px;
+  }
+  table.cal td {
+    font-family: var(--mono); text-align: right; padding: 2px 8px 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cal-note { font-size: 10px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
   @media (max-width: 720px) {
     .wrap { padding: 18px 12px 36px; }
     .stats { grid-template-columns: 1fr 1fr; }
@@ -220,20 +234,42 @@ function fmt(n) {
   return x.toLocaleString('ru-RU');
 }
 function pad(n) { return String(n).padStart(2, '0'); }
+let displayTz = 'UTC';
+let displayTzLabel = 'UTC';
+let hidePartialSpendChips = false;
 function parseDate(v) {
   if (!v) return null;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
 }
+function tzParts(d) {
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: displayTz,
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false
+  });
+  const map = {};
+  fmt.formatToParts(d).forEach(function(p) { map[p.type] = p.value; });
+  return map;
+}
 function fmtDateShort(v) {
   const d = parseDate(v);
   if (!d) return v || '—';
-  return pad(d.getUTCDate()) + '.' + pad(d.getUTCMonth()+1) + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
+  if (displayTz === 'UTC') {
+    return pad(d.getUTCDate()) + '.' + pad(d.getUTCMonth()+1) + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
+  }
+  const p = tzParts(d);
+  return p.day + '.' + p.month + ' ' + p.hour + ':' + p.minute + ' ' + displayTzLabel;
 }
 function fmtDateTime(v) {
   const d = parseDate(v);
   if (!d) return v || '—';
-  return pad(d.getUTCDate()) + '.' + pad(d.getUTCMonth()+1) + '.' + d.getUTCFullYear() + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
+  if (displayTz === 'UTC') {
+    return pad(d.getUTCDate()) + '.' + pad(d.getUTCMonth()+1) + '.' + d.getUTCFullYear() + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
+  }
+  const p = tzParts(d);
+  return p.day + '.' + p.month + '.' + p.year + ' ' + p.hour + ':' + p.minute + ' ' + displayTzLabel;
 }
 function fmtRelative(v) {
   const d = parseDate(v);
@@ -448,7 +484,7 @@ function heroFor(w) {
       const daily = w.usage_daily != null ? w.usage_daily : key.usage_daily;
       return {
         value: daily != null ? ('−$' + money(daily)) : '—',
-        caption: 'сегодня (UTC, key)',
+        caption: 'сутки UTC (ключ)',
         plan: key.label || 'key',
       };
     }
@@ -533,9 +569,9 @@ function openrouterKeyLiveChips(w) {
   const weekly = w.usage_weekly != null ? w.usage_weekly : key.usage_weekly;
   const monthly = w.usage_monthly != null ? w.usage_monthly : key.usage_monthly;
   let html = '';
-  if (daily != null) html += '<span class="chip">сегодня −$' + money(daily) + '</span>';
-  if (weekly != null) html += '<span class="chip">нед −$' + money(weekly) + '</span>';
-  if (monthly != null) html += '<span class="chip">мес −$' + money(monthly) + '</span>';
+  if (daily != null) html += '<span class="chip">сутки UTC −$' + money(daily) + '</span>';
+  if (weekly != null) html += '<span class="chip">нед UTC −$' + money(weekly) + '</span>';
+  if (monthly != null) html += '<span class="chip">мес UTC −$' + money(monthly) + '</span>';
   return html;
 }
 
@@ -639,9 +675,12 @@ function detailsOpenrouter(w) {
     if (key.label) {
       html += '<div class="details-row"><span>label</span><span>' + escapeHtml(String(key.label)) + '</span></div>';
     }
-    html += '<div class="details-row"><span>сегодня</span><span>$' + money(daily) + '</span></div>' +
-      '<div class="details-row"><span>неделя</span><span>$' + money(weekly) + '</span></div>' +
-      '<div class="details-row"><span>месяц</span><span>$' + money(monthly) + '</span></div>';
+    html += '<div class="details-row"><span>сутки UTC</span><span>$' + money(daily) + '</span></div>' +
+      '<div class="details-row"><span>неделя UTC (пн–вс)</span><span>$' + money(weekly) + '</span></div>' +
+      '<div class="details-row"><span>месяц UTC</span><span>$' + money(monthly) + '</span></div>';
+    if (key.usage != null) {
+      html += '<div class="details-row"><span>Итого</span><span>$' + money(key.usage) + '</span></div>';
+    }
     if (key.limit != null || key.limit_remaining != null) {
       html += '<div class="details-row"><span>лимит</span><span>$' + money(key.limit_remaining) + ' / $' + money(key.limit) + '</span></div>';
     }
@@ -679,12 +718,38 @@ function detailsSimple(w, extraRows, source) {
   return html;
 }
 
+function calendarCell(row) {
+  if (!row || row.spent == null || row.partial) return '—';
+  return '$' + money(row.spent);
+}
+
+function renderSpendCalendar(w) {
+  const cal = w.spend_calendar;
+  if (!cal) return '';
+  const totalRow = cal.total || {};
+  const totalCell = totalRow.spent == null ? '—' : ('$' + money(totalRow.spent));
+  return '<div class="cal-wrap"><table class="cal"><thead><tr>' +
+    '<th>вчера</th><th>7 дней</th><th>30 дней</th><th>Итого</th>' +
+    '</tr></thead><tbody><tr>' +
+    '<td>' + calendarCell(cal.yesterday) + '</td>' +
+    '<td>' + calendarCell(cal.days_7) + '</td>' +
+    '<td>' + calendarCell(cal.days_30) + '</td>' +
+    '<td>' + totalCell + '</td>' +
+    '</tr></tbody></table>' +
+    '<div class="cal-note">' + escapeHtml(cal.note || 'сутки МСК (UTC+3)') + '</div></div>';
+}
+
 function renderProviderCard(w, spec) {
   if (!w) return '';
   const st = classify(w);
   const hero = heroFor(w);
-  const chips = spendChip('24ч', w.spend_24h) + spendChip('7д', w.spend_7d) + (spec.prov === 'openrouter' ? openrouterKeyLiveChips(w) : '');
+  let chips = '';
+  if (!hidePartialSpendChips) {
+    chips += spendChip('24ч', w.spend_24h) + spendChip('7д', w.spend_7d);
+  }
+  if (spec.prov === 'openrouter') chips += openrouterKeyLiveChips(w);
   const spark = sparklineSvg(w.spend_series_7d);
+  const cal = hidePartialSpendChips ? renderSpendCalendar(w) : '';
   let bars = '';
   (spec.windows || []).forEach(function(win) {
     bars += allotmentBar(win.label, w[win.key] || {}, win.window);
@@ -702,6 +767,7 @@ function renderProviderCard(w, spec) {
     '<div class="hero"><div class="hero-val">' + escapeHtml(hero.value) + '</div>' +
       '<div class="hero-cap">' + escapeHtml(hero.caption) + '</div></div>' +
     '<div class="delta-row">' + chips + spark + '</div>' +
+    cal +
     bars + errLine +
     '<div class="details-body">' + spec.details(w) + '</div>' +
     '<div class="details-toggle" onclick="toggleDetails(\'' + spec.id + '\')"></div>' +
@@ -915,10 +981,13 @@ async function load() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
 
+    applySiteTitle(data.site_title);
+    displayTz = data.display_tz || 'UTC';
+    displayTzLabel = data.display_tz_label || (displayTz === 'Europe/Moscow' ? 'МСК' : 'UTC');
+    hidePartialSpendChips = !!data.hide_partial_spend_chips;
+
     document.getElementById('updated').textContent =
       'обновлено: ' + fmtDateTime(data.updated_at) + ' · авто 30с';
-
-    applySiteTitle(data.site_title);
 
     const errs = data.errors || [];
     document.getElementById('errors').innerHTML = errs.map(function(e) {
