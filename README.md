@@ -81,9 +81,9 @@ MIT
 - Key usage: `GET /api/v1/key` (usage_daily/weekly/monthly)
 - Optional all keys: management key `GET /api/v1/keys`
 - `OPENROUTER_KEY_ONLY=1` (инстанс Алана): только `GET /api/v1/key`; `/credits` / `/keys` / `/activity` не вызываются. Карточка — расход ключа, без баланса аккаунта. `total_usage` в snapshots = `key.usage`. Unset на usage.ragpt.ru.
-- 24h / 7d spend: rolling snapshots of `total_usage`
+- 24h / 7d spend: rolling snapshots of `total_usage`. On the Alan instance (`hide_partial_spend_chips`) the summary «Расход 24ч» is this rolling sum with the window shown in МСК; card chips 24ч/7д stay hidden.
 - Per-model: `GET /api/v1/activity` (management key; last 30 completed UTC days; поля `model`, `usage` USD, `requests`, tokens). Verdict 2026-08-25. Нет ключа / 401/403 → «нет разбивки от провайдера».
-- Per-model ключа Алана (экспорт): основной инстанс при `OPENROUTER_TRACKED_KEY_HASH` (sha256 ключа, не сам ключ) раз в ≤300с пишет `/app/export/openrouter_key_models.json` из `GET /api/v1/activity?api_key_hash=`. Алан-инстанс при `OPENROUTER_KEY_ONLY` читает тот же файл (`OPENROUTER_IMPORT_PATH`); свежий ≤1800с → таблица моделей с пометкой «экспорт с аккаунта (key-only)»; нет файла → «нет разбивки от провайдера»; протух → «нет свежих данных экспорта». Activity с алан-контейнера не вызывается. Unset hash на usage.ragpt.ru = поведение без экспорта.
+- Per-model ключа Алана (экспорт): основной инстанс при `OPENROUTER_TRACKED_KEY_HASH` (sha256 ключа, не сам ключ) раз в ≤300с пишет `/app/export/openrouter_key_models.json` из `GET /api/v1/activity?api_key_hash=`. Короткое окно в файле (`usage_24h`) = вчерашние UTC-сутки. Алан-инстанс при `OPENROUTER_KEY_ONLY` читает тот же файл (`OPENROUTER_IMPORT_PATH`); свежий ≤1800с → таблица моделей «вчера / 7 дней / 30 дней» с датами UTC в сноске; нет файла → «нет разбивки от провайдера»; протух → «нет свежих данных экспорта». Activity с алан-контейнера не вызывается. Unset hash на usage.ragpt.ru = поведение без экспорта.
 - tw-msk egress: `openrouter.ai` is DPI-blocked. Probe uses `OPENROUTER_BASE_URL` (compose default: London nginx `:8444` over Tailscale `100.69.177.71`) and/or `OPENROUTER_PROXY` (HTTP CONNECT or SOCKS5/SOCKS5h, OpenRouter-only). `OPENROUTER_SSL_NO_VERIFY=1` for HTTPS to the Tailscale IP. Values live in Dockhand stack env — do not commit secrets.
 
 ### Z.AI GLM Coding

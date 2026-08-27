@@ -176,17 +176,16 @@
   table.models td.model { font-family: var(--mono); font-size: 12px; }
   table.models tr:last-child td { border-bottom: 0; }
   .models-note { font-size: 12px; color: var(--muted); padding: 12px 14px; }
-  .cal-wrap { margin: 0 0 12px; }
-  table.cal {
-    width: 100%; border-collapse: collapse; font-size: 12px;
+  .win-row {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px; margin: 0 0 12px;
   }
-  table.cal th {
+  .win-k {
     color: var(--muted); font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.04em; font-weight: 600; text-align: right;
-    padding: 4px 8px 6px;
+    letter-spacing: 0.04em; font-weight: 600;
   }
-  table.cal td {
-    font-family: var(--mono); text-align: right; padding: 2px 8px 4px;
+  .win-v {
+    font-family: var(--mono); font-size: 13px; margin-top: 2px;
     font-variant-numeric: tabular-nums;
   }
   .cal-note { font-size: 10px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
@@ -484,7 +483,7 @@ function heroFor(w) {
       const daily = w.usage_daily != null ? w.usage_daily : key.usage_daily;
       return {
         value: daily != null ? ('−$' + money(daily)) : '—',
-        caption: 'сутки UTC (ключ)',
+        caption: 'сутки (сброс 03:00 МСК)',
         plan: key.label || 'key',
       };
     }
@@ -572,6 +571,8 @@ function openrouterKeyLiveChips(w) {
   if (daily != null) html += '<span class="chip">сутки UTC −$' + money(daily) + '</span>';
   if (weekly != null) html += '<span class="chip">нед UTC −$' + money(weekly) + '</span>';
   if (monthly != null) html += '<span class="chip">мес UTC −$' + money(monthly) + '</span>';
+  const total = w.total_usage != null ? w.total_usage : key.usage;
+  if (total != null) html += '<span class="chip">всего $' + money(total) + '</span>';
   return html;
 }
 
@@ -727,40 +728,6 @@ function calendarWindowFilled(row) {
   return !!(row && row.spent != null && !row.partial);
 }
 
-function renderSpendCalendar(w) {
-  const cal = w.spend_calendar;
-  if (!cal) return '';
-  if (!calendarWindowFilled(cal.yesterday) &&
-      !calendarWindowFilled(cal.days_7) &&
-      !calendarWindowFilled(cal.days_30)) {
-    return '';
-  }
-  let head = '';
-  let body = '';
-  if (calendarWindowFilled(cal.yesterday)) {
-    head += '<th>вчера</th>';
-    body += '<td>' + calendarCell(cal.yesterday) + '</td>';
-  }
-  if (calendarWindowFilled(cal.days_7)) {
-    head += '<th>7 дней</th>';
-    body += '<td>' + calendarCell(cal.days_7) + '</td>';
-  }
-  if (calendarWindowFilled(cal.days_30)) {
-    head += '<th>30 дней</th>';
-    body += '<td>' + calendarCell(cal.days_30) + '</td>';
-  }
-  const totalRow = cal.total || {};
-  const totalCell = totalRow.spent == null ? '—' : ('$' + money(totalRow.spent));
-  head += '<th>Итого</th>';
-  body += '<td>' + totalCell + '</td>';
-  return '<div class="cal-wrap"><table class="cal"><thead><tr>' +
-    head +
-    '</tr></thead><tbody><tr>' +
-    body +
-    '</tr></tbody></table>' +
-    '<div class="cal-note">' + escapeHtml(cal.note || 'сутки МСК (UTC+3)') + '</div></div>';
-}
-
 function renderProviderCard(w, spec) {
   if (!w) return '';
   const st = classify(w);
@@ -771,7 +738,6 @@ function renderProviderCard(w, spec) {
   }
   if (spec.prov === 'openrouter') chips += openrouterKeyLiveChips(w);
   const spark = sparklineSvg(w.spend_series_7d);
-  const cal = hidePartialSpendChips ? renderSpendCalendar(w) : '';
   let bars = '';
   (spec.windows || []).forEach(function(win) {
     bars += allotmentBar(win.label, w[win.key] || {}, win.window);
@@ -789,7 +755,6 @@ function renderProviderCard(w, spec) {
     '<div class="hero"><div class="hero-val">' + escapeHtml(hero.value) + '</div>' +
       '<div class="hero-cap">' + escapeHtml(hero.caption) + '</div></div>' +
     '<div class="delta-row">' + chips + spark + '</div>' +
-    cal +
     bars + errLine +
     '<div class="details-body">' + spec.details(w) + '</div>' +
     '<div class="details-toggle" onclick="toggleDetails(\'' + spec.id + '\')"></div>' +
@@ -884,19 +849,16 @@ function renderModelsSection(orWallet) {
   }
   if (isExport) {
     let html = '<div class="table-wrap"><table class="models"><thead><tr>' +
-      '<th>модель</th><th class="num">24ч</th><th class="num">7д</th><th class="num">30д</th>' +
-      '<th class="num">req 24ч</th><th class="num">req 7д</th>' +
+      '<th>модель</th><th class="num">вчера</th><th class="num">7 дней</th><th class="num">30 дней</th>' +
       '</tr></thead><tbody>';
     items.forEach(function(it) {
       html += '<tr><td class="model">' + escapeHtml(it.model || '?') + '</td>' +
         '<td class="num">$' + money(it.usage_24h) + '</td>' +
         '<td class="num">$' + money(it.usage_7d != null ? it.usage_7d : it.usage) + '</td>' +
-        '<td class="num">$' + money(it.usage_30d) + '</td>' +
-        '<td class="num">' + fmt(it.requests_24h) + '</td>' +
-        '<td class="num">' + fmt(it.requests_7d != null ? it.requests_7d : it.requests) + '</td></tr>';
+        '<td class="num">$' + money(it.usage_30d) + '</td></tr>';
     });
     html += '</tbody></table></div>';
-    html += '<div class="bar-sub" style="margin-top:8px">' + escapeHtml(m.note || 'экспорт с аккаунта (key-only)') + '</div>';
+    html += '<div class="bar-sub" style="margin-top:8px">' + escapeHtml(m.note || 'UTC-дни activity') + '</div>';
     return html;
   }
   let html = '<div class="table-wrap"><table class="models"><thead><tr>' +
@@ -981,7 +943,15 @@ function renderStats(data) {
     const spendNames = [];
     if (wallets.deepseek) spendNames.push('DeepSeek');
     if (wallets.openrouter) spendNames.push('OpenRouter');
-    spendSub = spendNames.join(' + ') + ' · 7д на карточках';
+    if (hidePartialSpendChips) {
+      const hours = orSpend.window_hours || 24;
+      const end = parseDate(data.updated_at) || new Date();
+      const start = new Date(end.getTime() - hours * 3600 * 1000);
+      spendSub = 'rolling ' + hours + 'ч · ' + fmtDateShort(start.toISOString()) + ' – ' + fmtDateShort(end.toISOString());
+      if (orSpend.partial && orSpend.spent != null) spendSub += ' · частичное';
+    } else {
+      spendSub = spendNames.join(' + ') + ' · 7д на карточках';
+    }
   } else {
     allItems.forEach(function(item) {
       const s = item.spend_24h || {};
@@ -1056,7 +1026,7 @@ async function load() {
     const orModels = (wallets.openrouter && wallets.openrouter.models) || {};
     modelsLabel.style.display = hasOpenrouter ? '' : 'none';
     modelsLabel.textContent = (orModels.source === 'openrouter-key-export')
-      ? 'По моделям · OpenRouter · ключ'
+      ? 'По моделям · OpenRouter'
       : 'По моделям · OpenRouter · 7д';
     const modelsEl = document.getElementById('models');
     modelsEl.style.display = hasOpenrouter ? '' : 'none';

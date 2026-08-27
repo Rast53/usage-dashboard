@@ -121,8 +121,8 @@ class AggregateOpenrouterKeyModelsTest(unittest.TestCase):
         self.assertIn("kuaishou/kling-v1", names)
         self.assertNotIn("old/dropped", names)
         gemini = next(row for row in rolled["models"] if row["model"] == "google/gemini-flash")
-        self.assertEqual(gemini["usage_24h"], 1.5)
-        self.assertEqual(gemini["requests_24h"], 3)
+        self.assertEqual(gemini["usage_24h"], 0.5)
+        self.assertEqual(gemini["requests_24h"], 1)
         self.assertEqual(gemini["usage_7d"], 1.5)
         self.assertEqual(gemini["requests_7d"], 3)
         self.assertEqual(gemini["usage_30d"], 1.5)
@@ -137,9 +137,15 @@ class AggregateOpenrouterKeyModelsTest(unittest.TestCase):
         self.assertEqual(kokoro["usage_7d"], 0.0)
         self.assertEqual(kokoro["requests_7d"], 0)
         self.assertEqual(kokoro["usage_30d"], 3.0)
-        self.assertEqual(rolled["totals"]["usage_24h"], 1.5)
+        self.assertEqual(rolled["totals"]["usage_24h"], 0.5)
         self.assertEqual(rolled["totals"]["usage_7d"], 3.5)
         self.assertEqual(rolled["totals"]["usage_30d"], 6.5)
+        self.assertEqual(rolled["windows"]["tz"], "UTC")
+        self.assertEqual(rolled["windows"]["yesterday"], "2026-08-26")
+        self.assertEqual(rolled["windows"]["days_7"]["from"], "2026-08-21")
+        self.assertEqual(rolled["windows"]["days_7"]["to"], "2026-08-27")
+        self.assertEqual(rolled["windows"]["days_30"]["from"], "2026-07-29")
+        self.assertEqual(rolled["windows"]["days_30"]["to"], "2026-08-27")
 
 
 class ExportWriterTest(unittest.TestCase):
@@ -190,10 +196,12 @@ class ExportWriterTest(unittest.TestCase):
         self.assertIn("kuaishou/kling-v1", names)
         self.assertNotIn("old/dropped", names)
         self.assertEqual(payload["totals"]["usage_30d"], 6.5)
+        self.assertEqual(payload["windows"]["yesterday"], "2026-08-26")
         blob = json.dumps(payload)
         _assert_export_contract(blob)
         self.assertNotIn("total_credits", blob)
         self.assertNotIn("remaining", blob)
+        self.assertNotIn("экспорт с аккаунта", blob)
 
     def test_error_keeps_previous_models_and_sets_last_error(self) -> None:
         now = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
@@ -219,6 +227,7 @@ class ExportWriterTest(unittest.TestCase):
         self.assertIn("403", payload["last_error"])
         self.assertEqual(payload["models"], prev["models"])
         self.assertEqual(payload["totals"], prev["totals"])
+        self.assertEqual(payload.get("windows"), prev.get("windows"))
         _assert_export_contract(json.dumps(payload))
 
     def test_throttle_skips_second_call_within_300s(self) -> None:
@@ -273,8 +282,8 @@ class ImportOverlayTest(unittest.TestCase):
         app.reset_openrouter_export_throttle()
         self.tmp.cleanup()
 
-    def _payload(self, updated_at: str) -> dict:
-        return {
+    def _payload(self, updated_at: str, windows: dict | None = None) -> dict:
+        body = {
             "schema": 1,
             "updated_at": updated_at,
             "key_label_hash_suffix": "hash-aln",
@@ -290,6 +299,9 @@ class ImportOverlayTest(unittest.TestCase):
             ],
             "totals": {"usage_24h": 1.25, "usage_7d": 6.5, "usage_30d": 18.0},
         }
+        if windows is not None:
+            body["windows"] = windows
+        return body
 
     def _probe(self) -> dict:
         return {
@@ -314,7 +326,13 @@ class ImportOverlayTest(unittest.TestCase):
 
     def test_fresh_file_builds_models_from_export(self) -> None:
         now = datetime.now(timezone.utc)
-        self.export.write_text(json.dumps(self._payload(_iso(now))), encoding="utf-8")
+        windows = app._openrouter_key_window_meta(
+            datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
+        )
+        self.export.write_text(
+            json.dumps(self._payload(_iso(now), windows)),
+            encoding="utf-8",
+        )
         env = _env_without("OPENROUTER_KEY_ONLY", "OPENROUTER_IMPORT_PATH")
         env.update(
             {
@@ -328,7 +346,12 @@ class ImportOverlayTest(unittest.TestCase):
         models = wallet["models"]
         self.assertTrue(models["available"])
         self.assertEqual(models["source"], "openrouter-key-export")
-        self.assertEqual(models["note"], app.OPENROUTER_KEY_EXPORT_NOTE)
+        self.assertEqual(models["note"], app.openrouter_key_models_note(windows))
+        self.assertIn("вчера 26.08 UTC", models["note"])
+        self.assertIn("7 дней 21.08–27.08 UTC", models["note"])
+        self.assertIn("30 дней 29.07–27.08 UTC", models["note"])
+        self.assertNotIn("экспорт с аккаунта", models["note"])
+        self.assertEqual(models["windows"]["yesterday"], "2026-08-26")
         self.assertEqual(models["items"][0]["model"], "google/gemini-flash")
         self.assertEqual(models["items"][0]["usage"], 6.5)
         self.assertEqual(models["items"][0]["usage_24h"], 1.25)
@@ -338,6 +361,19 @@ class ImportOverlayTest(unittest.TestCase):
         blob = json.dumps(wallet)
         _assert_no_key_literals(blob)
         self.assertIsNone(json.loads(blob).get("total_credits"))
+
+    def test_legacy_file_without_windows_infers_dates(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.export.write_text(json.dumps(self._payload(_iso(now))), encoding="utf-8")
+        env = _env_without("OPENROUTER_KEY_ONLY", "OPENROUTER_IMPORT_PATH")
+        env.update({"OPENROUTER_KEY_ONLY": "1", "OPENROUTER_IMPORT_PATH": str(self.export)})
+        with patch.dict("os.environ", env, clear=True):
+            wallet = app.build_openrouter_wallet(self._probe())
+        assert wallet is not None
+        expected = app._openrouter_key_window_meta(now)
+        self.assertEqual(wallet["models"]["windows"]["yesterday"], expected["yesterday"])
+        self.assertEqual(wallet["models"]["note"], app.openrouter_key_models_note(expected))
+        self.assertNotIn("экспорт с аккаунта", wallet["models"]["note"])
 
     def test_stale_file_uses_fresh_export_reason(self) -> None:
         now = datetime.now(timezone.utc)
@@ -491,6 +527,19 @@ class CollectStateDefaultsExportOffTest(unittest.TestCase):
         self.assertEqual(wallet["models"]["source"], "openrouter-activity")
         self.assertEqual(state["site_title"], "Мои подписки")
         self.assertEqual(state["enabled_providers"], ["openrouter"])
+
+
+class WindowNoteHelpersTest(unittest.TestCase):
+    def test_fmt_and_note(self) -> None:
+        self.assertEqual(app._fmt_iso_day("2026-08-26"), "26.08")
+        self.assertEqual(app._fmt_iso_day(None), "—")
+        now = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
+        note = app.openrouter_key_models_note(app._openrouter_key_window_meta(now))
+        self.assertEqual(
+            note,
+            "вчера 26.08 UTC · 7 дней 21.08–27.08 UTC · 30 дней 29.07–27.08 UTC",
+        )
+        self.assertNotIn("экспорт", note)
 
 
 class NewTestLiteralsGuard(unittest.TestCase):

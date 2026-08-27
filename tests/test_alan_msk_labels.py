@@ -98,6 +98,13 @@ class OpenrouterCalendarSpendTest(unittest.TestCase):
         self.assertFalse(cal["days_30"]["partial"])
         self.assertEqual(cal["total"]["spent"], 132.0)
         self.assertIn("МСК", cal["note"])
+        self.assertIn("вчера 26.08", cal["note"])
+        self.assertIn("7 дней 20.08–26.08", cal["note"])
+        self.assertEqual(cal["days_7"]["from"], "2026-08-20")
+        self.assertEqual(cal["days_7"]["to"], "2026-08-26")
+        self.assertEqual(cal["days_30"]["from"], "2026-07-28")
+        self.assertEqual(cal["days_30"]["to"], "2026-08-26")
+        self.assertIn("30 дней 28.07–26.08", cal["note"])
 
     def test_incomplete_windows_are_null_not_tilde(self) -> None:
         now = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
@@ -138,14 +145,18 @@ class UiContractMskTest(unittest.TestCase):
         self.assertIn("spendChip('24ч'", html)
         self.assertIn("spendChip('7д'", html)
         self.assertIn("renderSpendCalendar", html)
-        self.assertIn("function calendarWindowFilled", html)
         self.assertIn("<th>вчера</th>", html)
         self.assertIn("<th>7 дней</th>", html)
         self.assertIn("<th>30 дней</th>", html)
         self.assertIn("<th>Итого</th>", html)
+        self.assertNotIn("<th>Итого</th>", html)
+        self.assertNotIn("<table class=\"cal\">", html)
+        self.assertIn("<th class=\"num\">вчера</th>", html)
         self.assertIn("сутки UTC (ключ)", html)
         self.assertNotIn("сегодня (UTC, key)", html)
         self.assertIn("getUTCFullYear()", html)
+        self.assertIn("rolling ", html)
+        self.assertNotIn("экспорт с аккаунта", html)
 
     def test_html_hides_empty_openrouter_calendar_windows(self) -> None:
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
