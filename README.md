@@ -57,11 +57,13 @@ python3 app.py
 Live: Dockhand **stack 7** on `tw-msk-server`, `https://usage.ragpt.ru`.
 Push to `main` → git webhook → build/recreate. Container `usage-dashboard-usage-dashboard-1`.
 
-Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI / COMMANDCODE / KIMI / OPENCODE_GO + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY` + optional `COMMANDCODE_PROXY` / `KIMI_PROXY` / `KIMI_CODE_BASE_URL` / `OPENCODE_GO_PROXY` / `OPENCODE_GO_BASE_URL` + optional `PROVIDERS` / `SITE_TITLE`). Do not commit keys or proxy passwords. `ZAI_PROXY`, `COMMANDCODE_API_KEY`, `KIMI_API_KEY` and `OPENCODE_GO_API_KEY` are `is_secret`.
+Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI / COMMANDCODE / KIMI / OPENCODE_GO + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY` + optional `COMMANDCODE_PROXY` / `KIMI_PROXY` / `KIMI_CODE_BASE_URL` / `OPENCODE_GO_PROXY` / `OPENCODE_GO_BASE_URL` + optional `PROVIDERS` / `SITE_TITLE` + optional `OPENROUTER_TRACKED_KEY_HASH` / `OPENROUTER_EXPORT_PATH` on stack 7 and `OPENROUTER_IMPORT_PATH` on alan). Do not commit keys or proxy passwords. `ZAI_PROXY`, `COMMANDCODE_API_KEY`, `KIMI_API_KEY` and `OPENCODE_GO_API_KEY` are `is_secret`.
 
 Второй инстанс (после merge, ops): тот же образ, `PROVIDERS=opencode-go,openrouter`, `OPENROUTER_KEY_ONLY=1`, `SITE_TITLE=Подписки — Алан`, `OPENROUTER_BASE_URL=http://100.69.177.71:8444`, отдельный volume, Traefik `usage.alan.ragpt.ru` **без** basicauth. Основной `usage.ragpt.ru` не задаёт `PROVIDERS` / `SITE_TITLE` / `OPENROUTER_KEY_ONLY` (дефолт = все 6, OpenRouter credits+management). Ключ Алана (`OPENROUTER_API_KEY`, `OPENCODE_GO_API_KEY`) только в Dockhand secret (`is_secret=1`); значение OpenRouter — из openclaw.json контейнера alanclaw-openclaw, не из git.
 
 Data volume: `/opt/usage-dashboard/data` → `/app/data`. Historical `snapshots.jsonl` stays on the volume (24h spend); do not truncate it.
+
+Shared export volume (after this task): `/opt/usage-dashboard/export` → `/app/export` (rw on stack 7, `:ro` on alan stack 8). Host dir is created by ops. Main writes `openrouter_key_models.json` when `OPENROUTER_TRACKED_KEY_HASH` is set; alan reads it. Do not put secrets in that file.
 
 ## License
 MIT
@@ -81,6 +83,7 @@ MIT
 - `OPENROUTER_KEY_ONLY=1` (инстанс Алана): только `GET /api/v1/key`; `/credits` / `/keys` / `/activity` не вызываются. Карточка — расход ключа, без баланса аккаунта. `total_usage` в snapshots = `key.usage`. Unset на usage.ragpt.ru.
 - 24h / 7d spend: rolling snapshots of `total_usage`
 - Per-model: `GET /api/v1/activity` (management key; last 30 completed UTC days; поля `model`, `usage` USD, `requests`, tokens). Verdict 2026-08-25. Нет ключа / 401/403 → «нет разбивки от провайдера».
+- Per-model ключа Алана (экспорт): основной инстанс при `OPENROUTER_TRACKED_KEY_HASH` (sha256 ключа, не сам ключ) раз в ≤300с пишет `/app/export/openrouter_key_models.json` из `GET /api/v1/activity?api_key_hash=`. Алан-инстанс при `OPENROUTER_KEY_ONLY` читает тот же файл (`OPENROUTER_IMPORT_PATH`); свежий ≤1800с → таблица моделей с пометкой «экспорт с аккаунта (key-only)»; нет файла → «нет разбивки от провайдера»; протух → «нет свежих данных экспорта». Activity с алан-контейнера не вызывается. Unset hash на usage.ragpt.ru = поведение без экспорта.
 - tw-msk egress: `openrouter.ai` is DPI-blocked. Probe uses `OPENROUTER_BASE_URL` (compose default: London nginx `:8444` over Tailscale `100.69.177.71`) and/or `OPENROUTER_PROXY` (HTTP CONNECT or SOCKS5/SOCKS5h, OpenRouter-only). `OPENROUTER_SSL_NO_VERIFY=1` for HTTPS to the Tailscale IP. Values live in Dockhand stack env — do not commit secrets.
 
 ### Z.AI GLM Coding

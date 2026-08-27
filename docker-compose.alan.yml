@@ -1,6 +1,6 @@
 # Dockhand autodeploy on tw-msk-server — инстанс для Алана (TASK-alan-usage-page + TASK-alan-openrouter-key-card).
 # Тот же образ/код, что у основного стека, но: PROVIDERS=opencode-go,openrouter, OPENROUTER_KEY_ONLY=1,
-# свой volume, traefik usage.alan.ragpt.ru БЕЗ basicauth (явное решение Ивана 2026-08-25).
+# свой data-volume, общий export-volume :ro, traefik usage.alan.ragpt.ru БЕЗ basicauth (явное решение Ивана 2026-08-25).
 # Ключи Алана — только в Dockhand stack env (is_secret=1). Never commit keys.
 # OPENROUTER_API_KEY: из openclaw.json контейнера alanclaw-openclaw (ops, is_secret=1).
 services:
@@ -9,6 +9,7 @@ services:
     restart: unless-stopped
     volumes:
       - /opt/usage-dashboard-alan/data:/app/data
+      - /opt/usage-dashboard/export:/app/export:ro
     environment:
       - USAGE_PORT=${USAGE_PORT:-3210}
       - USAGE_POLL_SECONDS=${USAGE_POLL_SECONDS:-60}
@@ -25,6 +26,7 @@ services:
       - OPENROUTER_KEY_ONLY=${OPENROUTER_KEY_ONLY:-1}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-http://100.69.177.71:8444}
+      - OPENROUTER_IMPORT_PATH=${OPENROUTER_IMPORT_PATH:-/app/export/openrouter_key_models.json}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

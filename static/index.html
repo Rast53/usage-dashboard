@@ -789,9 +789,27 @@ function renderModelsSection(orWallet) {
   if (!m.available) {
     return '<div class="table-wrap"><div class="models-note">' + escapeHtml(m.reason || NO_MODEL_BREAKDOWN) + '</div></div>';
   }
+  const isExport = m.source === 'openrouter-key-export';
   const items = m.items || [];
   if (!items.length) {
     return '<div class="table-wrap"><div class="models-note">нет данных за период</div></div>';
+  }
+  if (isExport) {
+    let html = '<div class="table-wrap"><table class="models"><thead><tr>' +
+      '<th>модель</th><th class="num">24ч</th><th class="num">7д</th><th class="num">30д</th>' +
+      '<th class="num">req 24ч</th><th class="num">req 7д</th>' +
+      '</tr></thead><tbody>';
+    items.forEach(function(it) {
+      html += '<tr><td class="model">' + escapeHtml(it.model || '?') + '</td>' +
+        '<td class="num">$' + money(it.usage_24h) + '</td>' +
+        '<td class="num">$' + money(it.usage_7d != null ? it.usage_7d : it.usage) + '</td>' +
+        '<td class="num">$' + money(it.usage_30d) + '</td>' +
+        '<td class="num">' + fmt(it.requests_24h) + '</td>' +
+        '<td class="num">' + fmt(it.requests_7d != null ? it.requests_7d : it.requests) + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<div class="bar-sub" style="margin-top:8px">' + escapeHtml(m.note || 'экспорт с аккаунта (key-only)') + '</div>';
+    return html;
   }
   let html = '<div class="table-wrap"><table class="models"><thead><tr>' +
     '<th>модель</th><th class="num">spend</th><th class="num">req</th><th class="num">tokens</th>' +
@@ -943,7 +961,12 @@ async function load() {
     }).filter(Boolean).join('');
     document.getElementById('providers').innerHTML = providerCards || '<div class="muted">Нет данных</div>';
     const hasOpenrouter = !!wallets.openrouter;
-    document.getElementById('models-label').style.display = hasOpenrouter ? '' : 'none';
+    const modelsLabel = document.getElementById('models-label');
+    const orModels = (wallets.openrouter && wallets.openrouter.models) || {};
+    modelsLabel.style.display = hasOpenrouter ? '' : 'none';
+    modelsLabel.textContent = (orModels.source === 'openrouter-key-export')
+      ? 'По моделям · OpenRouter · ключ'
+      : 'По моделям · OpenRouter · 7д';
     const modelsEl = document.getElementById('models');
     modelsEl.style.display = hasOpenrouter ? '' : 'none';
     modelsEl.innerHTML = renderModelsSection(wallets.openrouter);
