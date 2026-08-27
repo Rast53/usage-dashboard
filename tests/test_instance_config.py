@@ -278,16 +278,30 @@ class RenderContractTest(unittest.TestCase):
         self.assertIn("models-label", html)
         self.assertIn("CARD_ORDER", html)
         self.assertIn("opencode-go-card", html)
+        self.assertIn("function openrouterIsKeyOnly", html)
+        self.assertIn("GET /api/v1/key (key-only)", html)
+        self.assertIn("OpenRouter · key", html)
 
     def test_compose_and_env_example_expose_slots_without_secrets(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        alan = (ROOT / "docker-compose.alan.yml").read_text(encoding="utf-8")
         example = (ROOT / ".env.example").read_text(encoding="utf-8")
         self.assertIn("PROVIDERS=${PROVIDERS:-}", compose)
         self.assertIn("SITE_TITLE=${SITE_TITLE:-}", compose)
+        self.assertNotIn("OPENROUTER_KEY_ONLY=1", compose)
+        self.assertNotIn("OPENROUTER_KEY_ONLY=${OPENROUTER_KEY_ONLY:-1}", compose)
+        self.assertIn("PROVIDERS=${PROVIDERS:-opencode-go,openrouter}", alan)
+        self.assertIn("OPENROUTER_KEY_ONLY=${OPENROUTER_KEY_ONLY:-1}", alan)
+        self.assertIn("OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}", alan)
+        self.assertIn("OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-http://100.69.177.71:8444}", alan)
+        self.assertIn("SITE_TITLE=${SITE_TITLE:-Подписки — Алан}", alan)
         self.assertIn("PROVIDERS=", example)
         self.assertIn("SITE_TITLE=", example)
-        self.assertNotIn(SECRET, compose + example)
-        self.assertNotRegex(compose + example, r"sk-[a-zA-Z0-9]{8,}")
+        self.assertIn("OPENROUTER_KEY_ONLY=", example)
+        blob = compose + alan + example
+        self.assertNotIn(SECRET, blob)
+        self.assertNotRegex(blob, r"sk-[a-zA-Z0-9]{8,}")
+        self.assertNotIn("sk-or-", blob)
 
 
 if __name__ == "__main__":
