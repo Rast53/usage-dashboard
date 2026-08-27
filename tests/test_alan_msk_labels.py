@@ -139,24 +139,31 @@ class OpenrouterCalendarSpendTest(unittest.TestCase):
 
 
 class UiContractMskTest(unittest.TestCase):
-    def test_html_keeps_utc_chip_path_and_adds_msk_table(self) -> None:
+    def test_html_keeps_utc_chip_path_and_msk_labels(self) -> None:
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
         self.assertIn("if (!hidePartialSpendChips)", html)
         self.assertIn("spendChip('24ч'", html)
         self.assertIn("spendChip('7д'", html)
-        self.assertIn("renderSpendCalendar", html)
-        self.assertIn('win-k">вчера', html)
-        self.assertIn('win-k">7 дней', html)
-        self.assertIn('win-k">30 дней', html)
-        self.assertIn('win-k">всего', html)
-        self.assertNotIn("<th>Итого</th>", html)
-        self.assertNotIn("<table class=\"cal\">", html)
-        self.assertIn("<th class=\"num\">вчера</th>", html)
-        self.assertIn("сутки UTC (ключ)", html)
-        self.assertNotIn("сегодня (UTC, key)", html)
+        # карточка: без cal-таблицы/строки окон, всего — чипом, hero — сброс МСК
+        self.assertNotIn("renderSpendCalendar", html)
+        self.assertNotIn("win-row", html)
+        self.assertIn("всего $", html)
+        self.assertIn("сутки (сброс 03:00 МСК)", html)
+        # per-model таблица: вчера/7 дней/30 дней (завершённые UTC-дни)
+        self.assertIn('<th class="num">вчера</th>', html)
+        self.assertIn('<th class="num">7 дней</th>', html)
+        self.assertIn('<th class="num">30 дней</th>', html)
         self.assertIn("getUTCFullYear()", html)
         self.assertIn("rolling ", html)
         self.assertNotIn("экспорт с аккаунта", html)
+
+    def test_html_has_no_calendar_windows_row_on_card(self) -> None:
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("renderSpendCalendar", html)
+        self.assertNotIn("calendarWindowFilled", html)
+        self.assertNotIn("calendarCell", html)
+        self.assertNotIn("win-k", html)
+        self.assertNotIn("win-v", html)
 
 
 if __name__ == "__main__":

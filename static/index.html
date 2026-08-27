@@ -176,19 +176,6 @@
   table.models td.model { font-family: var(--mono); font-size: 12px; }
   table.models tr:last-child td { border-bottom: 0; }
   .models-note { font-size: 12px; color: var(--muted); padding: 12px 14px; }
-  .win-row {
-    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px; margin: 0 0 12px;
-  }
-  .win-k {
-    color: var(--muted); font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.04em; font-weight: 600;
-  }
-  .win-v {
-    font-family: var(--mono); font-size: 13px; margin-top: 2px;
-    font-variant-numeric: tabular-nums;
-  }
-  .cal-note { font-size: 10px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
   @media (max-width: 720px) {
     .wrap { padding: 18px 12px 36px; }
     .stats { grid-template-columns: 1fr 1fr; }
@@ -483,7 +470,7 @@ function heroFor(w) {
       const daily = w.usage_daily != null ? w.usage_daily : key.usage_daily;
       return {
         value: daily != null ? ('−$' + money(daily)) : '—',
-        caption: 'сутки UTC (ключ)',
+        caption: 'сутки (сброс 03:00 МСК)',
         plan: key.label || 'key',
       };
     }
@@ -571,6 +558,8 @@ function openrouterKeyLiveChips(w) {
   if (daily != null) html += '<span class="chip">сутки UTC −$' + money(daily) + '</span>';
   if (weekly != null) html += '<span class="chip">нед UTC −$' + money(weekly) + '</span>';
   if (monthly != null) html += '<span class="chip">мес UTC −$' + money(monthly) + '</span>';
+  const total = w.total_usage != null ? w.total_usage : key.usage;
+  if (total != null) html += '<span class="chip">всего $' + money(total) + '</span>';
   return html;
 }
 
@@ -717,25 +706,6 @@ function detailsSimple(w, extraRows, source) {
   return html;
 }
 
-function calendarCell(row) {
-  if (!row || row.spent == null || row.partial) return '—';
-  return '$' + money(row.spent);
-}
-
-function renderSpendCalendar(w) {
-  const cal = w.spend_calendar;
-  if (!cal) return '';
-  const totalRow = cal.total || {};
-  const totalCell = totalRow.spent == null ? '—' : ('$' + money(totalRow.spent));
-  return '<div class="win-row">' +
-    '<div class="win"><div class="win-k">вчера</div><div class="win-v">' + calendarCell(cal.yesterday) + '</div></div>' +
-    '<div class="win"><div class="win-k">7 дней</div><div class="win-v">' + calendarCell(cal.days_7) + '</div></div>' +
-    '<div class="win"><div class="win-k">30 дней</div><div class="win-v">' + calendarCell(cal.days_30) + '</div></div>' +
-    '<div class="win"><div class="win-k">всего</div><div class="win-v">' + totalCell + '</div></div>' +
-    '</div>' +
-    '<div class="cal-note">' + escapeHtml(cal.note || 'сутки МСК (UTC+3)') + '</div>';
-}
-
 function renderProviderCard(w, spec) {
   if (!w) return '';
   const st = classify(w);
@@ -746,7 +716,6 @@ function renderProviderCard(w, spec) {
   }
   if (spec.prov === 'openrouter') chips += openrouterKeyLiveChips(w);
   const spark = sparklineSvg(w.spend_series_7d);
-  const cal = hidePartialSpendChips ? renderSpendCalendar(w) : '';
   let bars = '';
   (spec.windows || []).forEach(function(win) {
     bars += allotmentBar(win.label, w[win.key] || {}, win.window);
@@ -764,7 +733,6 @@ function renderProviderCard(w, spec) {
     '<div class="hero"><div class="hero-val">' + escapeHtml(hero.value) + '</div>' +
       '<div class="hero-cap">' + escapeHtml(hero.caption) + '</div></div>' +
     '<div class="delta-row">' + chips + spark + '</div>' +
-    cal +
     bars + errLine +
     '<div class="details-body">' + spec.details(w) + '</div>' +
     '<div class="details-toggle" onclick="toggleDetails(\'' + spec.id + '\')"></div>' +
