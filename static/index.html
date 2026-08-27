@@ -723,18 +723,40 @@ function calendarCell(row) {
   return '$' + money(row.spent);
 }
 
+function calendarWindowFilled(row) {
+  return !!(row && row.spent != null && !row.partial);
+}
+
 function renderSpendCalendar(w) {
   const cal = w.spend_calendar;
   if (!cal) return '';
+  if (!calendarWindowFilled(cal.yesterday) &&
+      !calendarWindowFilled(cal.days_7) &&
+      !calendarWindowFilled(cal.days_30)) {
+    return '';
+  }
+  let head = '';
+  let body = '';
+  if (calendarWindowFilled(cal.yesterday)) {
+    head += '<th>вчера</th>';
+    body += '<td>' + calendarCell(cal.yesterday) + '</td>';
+  }
+  if (calendarWindowFilled(cal.days_7)) {
+    head += '<th>7 дней</th>';
+    body += '<td>' + calendarCell(cal.days_7) + '</td>';
+  }
+  if (calendarWindowFilled(cal.days_30)) {
+    head += '<th>30 дней</th>';
+    body += '<td>' + calendarCell(cal.days_30) + '</td>';
+  }
   const totalRow = cal.total || {};
   const totalCell = totalRow.spent == null ? '—' : ('$' + money(totalRow.spent));
+  head += '<th>Итого</th>';
+  body += '<td>' + totalCell + '</td>';
   return '<div class="cal-wrap"><table class="cal"><thead><tr>' +
-    '<th>вчера</th><th>7 дней</th><th>30 дней</th><th>Итого</th>' +
+    head +
     '</tr></thead><tbody><tr>' +
-    '<td>' + calendarCell(cal.yesterday) + '</td>' +
-    '<td>' + calendarCell(cal.days_7) + '</td>' +
-    '<td>' + calendarCell(cal.days_30) + '</td>' +
-    '<td>' + totalCell + '</td>' +
+    body +
     '</tr></tbody></table>' +
     '<div class="cal-note">' + escapeHtml(cal.note || 'сутки МСК (UTC+3)') + '</div></div>';
 }

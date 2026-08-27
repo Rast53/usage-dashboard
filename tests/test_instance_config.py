@@ -288,6 +288,7 @@ class RenderContractTest(unittest.TestCase):
         self.assertIn("OpenRouter · key", html)
         self.assertIn("hidePartialSpendChips", html)
         self.assertIn("renderSpendCalendar", html)
+        self.assertIn("function calendarWindowFilled", html)
         self.assertIn("<th>вчера</th>", html)
         self.assertIn("сутки UTC", html)
         self.assertIn("getUTCHours()", html)

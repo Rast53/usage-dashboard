@@ -138,6 +138,7 @@ class UiContractMskTest(unittest.TestCase):
         self.assertIn("spendChip('24ч'", html)
         self.assertIn("spendChip('7д'", html)
         self.assertIn("renderSpendCalendar", html)
+        self.assertIn("function calendarWindowFilled", html)
         self.assertIn("<th>вчера</th>", html)
         self.assertIn("<th>7 дней</th>", html)
         self.assertIn("<th>30 дней</th>", html)
@@ -145,6 +146,16 @@ class UiContractMskTest(unittest.TestCase):
         self.assertIn("сутки UTC (ключ)", html)
         self.assertNotIn("сегодня (UTC, key)", html)
         self.assertIn("getUTCFullYear()", html)
+
+    def test_html_hides_empty_openrouter_calendar_windows(self) -> None:
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("function calendarWindowFilled", html)
+        self.assertIn("!calendarWindowFilled(cal.yesterday)", html)
+        self.assertIn("!calendarWindowFilled(cal.days_7)", html)
+        self.assertIn("!calendarWindowFilled(cal.days_30)", html)
+        self.assertIn("if (calendarWindowFilled(cal.yesterday))", html)
+        self.assertIn("if (calendarWindowFilled(cal.days_7))", html)
+        self.assertIn("if (calendarWindowFilled(cal.days_30))", html)
 
 
 if __name__ == "__main__":
