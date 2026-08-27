@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -43,6 +43,12 @@ MSK_TZ = timezone(timedelta(hours=3), name="MSK")
 DISPLAY_TZ_UTC = "UTC"
 DISPLAY_TZ_MSK = "Europe/Moscow"
 NO_MODEL_BREAKDOWN = "нет разбивки от провайдера"
+NO_FRESH_EXPORT = "нет свежих данных экспорта"
+OPENROUTER_KEY_EXPORT_NOTE = "экспорт с аккаунта (key-only)"
+OPENROUTER_EXPORT_DEFAULT_PATH = "/app/export/openrouter_key_models.json"
+OPENROUTER_EXPORT_THROTTLE_SECONDS = 300
+OPENROUTER_IMPORT_MAX_AGE_SECONDS = 1800
+OPENROUTER_EXPORT_HASH_SUFFIX_LEN = 8
 DEFAULT_SITE_TITLE = "Мои подписки"
 KNOWN_PROVIDERS: tuple[str, ...] = (
     "deepseek",
@@ -95,6 +101,8 @@ _state: dict[str, Any] = {
 }
 _quota_cache: dict[str, Any] = {"updated_at": None, "accounts": {}}
 _quota_lock = threading.Lock()
+_openrouter_export_lock = threading.Lock()
+_openrouter_export_last_mono: float = 0.0
 
 
 def now_iso() -> str:
@@ -110,11 +118,16 @@ def load_json(path: Path, default: Any) -> Any:
         return default
 
 
-def save_json(path: Path, data: Any) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+def atomic_write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
     tmp.replace(path)
+
+
+def save_json(path: Path, data: Any) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(path, data)
 
 
 def load_state() -> None:
@@ -161,10 +174,10 @@ def invalidate_snapshot_cache() -> None:
     _snapshot_rows_key = None
 
 
-def models_unavailable(detail: str | None = None) -> dict[str, Any]:
+def models_unavailable(detail: str | None = None, *, reason: str | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {
         "available": False,
-        "reason": NO_MODEL_BREAKDOWN,
+        "reason": reason or NO_MODEL_BREAKDOWN,
         "items": [],
     }
     if detail:
@@ -347,6 +360,26 @@ def display_tzinfo(name: str | None = None) -> timezone:
 def hide_partial_spend_chips() -> bool:
     """Alan page: do not render snapshot 24h/7d chips (often partial with ~)."""
     return openrouter_key_only() or get_display_tz() == DISPLAY_TZ_MSK
+
+
+def get_openrouter_tracked_key_hash() -> str | None:
+    """OPENROUTER_TRACKED_KEY_HASH empty/unset → export off. Refuse raw key-shaped values."""
+    raw = os.environ.get("OPENROUTER_TRACKED_KEY_HASH", "").strip()
+    if not raw:
+        return None
+    if raw.lower().startswith("sk-"):
+        return None
+    return raw
+
+
+def get_openrouter_export_path() -> Path:
+    raw = os.environ.get("OPENROUTER_EXPORT_PATH", "").strip()
+    return Path(raw or OPENROUTER_EXPORT_DEFAULT_PATH)
+
+
+def get_openrouter_import_path() -> Path:
+    raw = os.environ.get("OPENROUTER_IMPORT_PATH", "").strip()
+    return Path(raw or OPENROUTER_EXPORT_DEFAULT_PATH)
 
 
 def openrouter_api_url(path: str) -> str:
@@ -711,25 +744,41 @@ def get_openrouter_management_key() -> str | None:
     return None
 
 
+def _openrouter_activity_day(item: dict[str, Any]) -> str:
+    # реальный API: "2026-08-24 00:00:00", не ISO-only
+    return str(item.get("date") or "")[:10]
+
+
+def _openrouter_activity_model_name(item: dict[str, Any]) -> str:
+    return str(item.get("model") or item.get("model_permaslug") or "?").strip() or "?"
+
+
+def _openrouter_day_windows(now: datetime) -> dict[str, set[str]]:
+    today = now.date()
+    return {
+        "24h": {today.isoformat(), (today - timedelta(days=1)).isoformat()},
+        "7d": {(today - timedelta(days=i)).isoformat() for i in range(7)},
+        "30d": {(today - timedelta(days=i)).isoformat() for i in range(30)},
+    }
+
+
 def aggregate_openrouter_models(
     items: list[Any],
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Roll GET /api/v1/activity rows into per-model spend (UTC calendar days)."""
     now = now or datetime.now(timezone.utc)
-    today = now.date()
-    day_24h = {today.isoformat(), (today - timedelta(days=1)).isoformat()}
-    day_7d = {(today - timedelta(days=i)).isoformat() for i in range(7)}
+    windows = _openrouter_day_windows(now)
 
     def _accumulate(subset: set[str]) -> list[dict[str, Any]]:
         by_model: dict[str, dict[str, Any]] = {}
         for it in items:
             if not isinstance(it, dict):
                 continue
-            day = str(it.get("date") or "")[:10]  # реальный API: "2026-08-24 00:00:00", не ISO-only
+            day = _openrouter_activity_day(it)
             if day not in subset:
                 continue
-            model = str(it.get("model") or it.get("model_permaslug") or "?").strip() or "?"
+            model = _openrouter_activity_model_name(it)
             bucket = by_model.setdefault(
                 model,
                 {
@@ -757,10 +806,287 @@ def aggregate_openrouter_models(
         "endpoint": "/api/v1/activity",
         "partial": True,
         "reason": None,
-        "items": _accumulate(day_7d),
-        "items_24h": _accumulate(day_24h),
+        "items": _accumulate(windows["7d"]),
+        "items_24h": _accumulate(windows["24h"]),
         "note": "UTC calendar days from GET /api/v1/activity (management key); not rolling hours",
     }
+
+
+def aggregate_openrouter_key_models(
+    items: list[Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Per-key activity rows → export contract (24h / 7d / 30d UTC calendar days)."""
+    now = now or datetime.now(timezone.utc)
+    windows = _openrouter_day_windows(now)
+    by_model: dict[str, dict[str, Any]] = {}
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        day = _openrouter_activity_day(it)
+        if day not in windows["30d"]:
+            continue
+        model = _openrouter_activity_model_name(it)
+        usage = float(it.get("usage") or 0)
+        requests = int(it.get("requests") or 0)
+        bucket = by_model.setdefault(
+            model,
+            {
+                "model": model,
+                "usage_24h": 0.0,
+                "usage_7d": 0.0,
+                "usage_30d": 0.0,
+                "requests_24h": 0,
+                "requests_7d": 0,
+            },
+        )
+        if day in windows["24h"]:
+            bucket["usage_24h"] += usage
+            bucket["requests_24h"] += requests
+        if day in windows["7d"]:
+            bucket["usage_7d"] += usage
+            bucket["requests_7d"] += requests
+        bucket["usage_30d"] += usage
+    models = sorted(
+        by_model.values(),
+        key=lambda row: (float(row["usage_7d"]), float(row["usage_30d"])),
+        reverse=True,
+    )
+    for row in models:
+        for key in ("usage_24h", "usage_7d", "usage_30d"):
+            row[key] = round(float(row[key]), 6)
+    return {
+        "models": models,
+        "totals": {
+            "usage_24h": round(sum(float(row["usage_24h"]) for row in models), 6),
+            "usage_7d": round(sum(float(row["usage_7d"]) for row in models), 6),
+            "usage_30d": round(sum(float(row["usage_30d"]) for row in models), 6),
+        },
+    }
+
+
+def _openrouter_hash_suffix(tracked_hash: str) -> str:
+    n = OPENROUTER_EXPORT_HASH_SUFFIX_LEN
+    if len(tracked_hash) <= n:
+        return tracked_hash
+    return tracked_hash[-n:]
+
+
+def _openrouter_export_skeleton(
+    *,
+    updated_at: str,
+    suffix: str,
+    models: list[dict[str, Any]],
+    totals: dict[str, Any],
+    last_error: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": 1,
+        "updated_at": updated_at,
+        "key_label_hash_suffix": suffix,
+        "models": models,
+        "totals": {
+            "usage_24h": float(totals.get("usage_24h") or 0),
+            "usage_7d": float(totals.get("usage_7d") or 0),
+            "usage_30d": float(totals.get("usage_30d") or 0),
+        },
+    }
+    if last_error:
+        payload["last_error"] = last_error
+    return payload
+
+
+def _read_openrouter_export_file(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_openrouter_export_error(path: Path, suffix: str, err: str) -> None:
+    prev = _read_openrouter_export_file(path) or {}
+    models = prev.get("models") if isinstance(prev.get("models"), list) else []
+    totals = prev.get("totals") if isinstance(prev.get("totals"), dict) else {}
+    prev_suffix = prev.get("key_label_hash_suffix")
+    if isinstance(prev_suffix, str) and prev_suffix:
+        suffix = prev_suffix
+    atomic_write_json(
+        path,
+        _openrouter_export_skeleton(
+            updated_at=now_iso(),
+            suffix=suffix,
+            models=[row for row in models if isinstance(row, dict)],
+            totals=totals,
+            last_error=err,
+        ),
+    )
+
+
+def fetch_openrouter_key_activity(
+    tracked_hash: str,
+) -> tuple[list[Any] | None, str | None]:
+    mkey = get_openrouter_management_key()
+    if not mkey:
+        return None, "OPENROUTER_MANAGEMENT_KEY not set"
+    proxy = get_openrouter_proxy()
+    ssl_verify = get_openrouter_ssl_verify()
+    url = openrouter_api_url("/api/v1/activity") + "?" + urlencode(
+        {"api_key_hash": tracked_hash}
+    )
+    st, _hdrs, data, err = http_json(
+        url,
+        token=mkey,
+        proxy=proxy,
+        timeout=20.0,
+        ssl_verify=ssl_verify,
+    )
+    if st == 200 and isinstance(data, dict) and isinstance(data.get("data"), list):
+        return data.get("data") or [], None
+    msg = None
+    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        msg = data["error"].get("message")
+    return None, f"activity API: {st} {msg or err or 'error'}".strip()
+
+
+def reset_openrouter_export_throttle() -> None:
+    global _openrouter_export_last_mono
+    _openrouter_export_last_mono = 0.0
+
+
+def maybe_export_openrouter_key_models(
+    *,
+    now: datetime | None = None,
+    force: bool = False,
+) -> None:
+    """Side-effect export for the main instance. No-op when hash unset. Never raises."""
+    global _openrouter_export_last_mono
+    tracked = get_openrouter_tracked_key_hash()
+    if not tracked:
+        return
+    path = get_openrouter_export_path()
+    suffix = _openrouter_hash_suffix(tracked)
+    try:
+        with _openrouter_export_lock:
+            mono = time.monotonic()
+            if (
+                not force
+                and _openrouter_export_last_mono
+                and (mono - _openrouter_export_last_mono) < OPENROUTER_EXPORT_THROTTLE_SECONDS
+            ):
+                return
+            _openrouter_export_last_mono = mono
+            rows, err = fetch_openrouter_key_activity(tracked)
+            if err or rows is None:
+                _write_openrouter_export_error(path, suffix, err or "activity fetch failed")
+                return
+            rolled = aggregate_openrouter_key_models(rows, now=now)
+            atomic_write_json(
+                path,
+                _openrouter_export_skeleton(
+                    updated_at=now_iso(),
+                    suffix=suffix,
+                    models=rolled["models"],
+                    totals=rolled["totals"],
+                ),
+            )
+    except Exception as exc:
+        try:
+            _write_openrouter_export_error(path, suffix, f"export: {exc}")
+        except Exception:
+            pass
+
+
+def _parse_export_updated_at(raw: Any) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def models_from_openrouter_key_export(payload: dict[str, Any]) -> dict[str, Any]:
+    rows_in = payload.get("models") if isinstance(payload.get("models"), list) else []
+    items: list[dict[str, Any]] = []
+    items_24h: list[dict[str, Any]] = []
+    for row in rows_in:
+        if not isinstance(row, dict):
+            continue
+        model = str(row.get("model") or "?").strip() or "?"
+        usage_24h = round(float(row.get("usage_24h") or 0), 6)
+        usage_7d = round(float(row.get("usage_7d") or 0), 6)
+        usage_30d = round(float(row.get("usage_30d") or 0), 6)
+        requests_24h = int(row.get("requests_24h") or 0)
+        requests_7d = int(row.get("requests_7d") or 0)
+        mapped = {
+            "model": model,
+            "usage": usage_7d,
+            "requests": requests_7d,
+            "usage_24h": usage_24h,
+            "usage_7d": usage_7d,
+            "usage_30d": usage_30d,
+            "requests_24h": requests_24h,
+            "requests_7d": requests_7d,
+        }
+        items.append(mapped)
+        items_24h.append(
+            {
+                "model": model,
+                "usage": usage_24h,
+                "requests": requests_24h,
+                "usage_24h": usage_24h,
+                "usage_7d": usage_7d,
+                "usage_30d": usage_30d,
+                "requests_24h": requests_24h,
+                "requests_7d": requests_7d,
+            }
+        )
+    items.sort(key=lambda row: float(row["usage"]), reverse=True)
+    items_24h.sort(key=lambda row: float(row["usage"]), reverse=True)
+    totals = payload.get("totals") if isinstance(payload.get("totals"), dict) else {}
+    return {
+        "available": True,
+        "source": "openrouter-key-export",
+        "endpoint": None,
+        "partial": True,
+        "reason": None,
+        "items": items,
+        "items_24h": items_24h,
+        "note": OPENROUTER_KEY_EXPORT_NOTE,
+        "totals": {
+            "usage_24h": round(float(totals.get("usage_24h") or 0), 6),
+            "usage_7d": round(float(totals.get("usage_7d") or 0), 6),
+            "usage_30d": round(float(totals.get("usage_30d") or 0), 6),
+        },
+    }
+
+
+def load_openrouter_key_models_import(
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Key-only importer. Missing → no breakdown; stale → no fresh export. Never raises."""
+    path = get_openrouter_import_path()
+    if not path.exists():
+        return models_unavailable()
+    payload = _read_openrouter_export_file(path)
+    if not payload:
+        return models_unavailable(reason=NO_FRESH_EXPORT)
+    ts = _parse_export_updated_at(payload.get("updated_at"))
+    if ts is None:
+        return models_unavailable(reason=NO_FRESH_EXPORT)
+    now = now or datetime.now(timezone.utc)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age = (now - ts).total_seconds()
+    if age > OPENROUTER_IMPORT_MAX_AGE_SECONDS or age < -60:
+        return models_unavailable(reason=NO_FRESH_EXPORT)
+    try:
+        return models_from_openrouter_key_export(payload)
+    except Exception:
+        return models_unavailable(reason=NO_FRESH_EXPORT)
 
 
 def _openrouter_key_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1083,6 +1409,8 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
     models = or_probe.get("models")
     if not isinstance(models, dict):
         models = models_unavailable("GET /api/v1/activity требует management key")
+    if key_only:
+        models = load_openrouter_key_models_import()
     return {
         "provider": "openrouter",
         "email": "openrouter-main",
@@ -2773,6 +3101,8 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
             }
             save_json(QUOTA_CACHE_PATH, _quota_cache)
         quota_accounts = dict((_quota_cache or {}).get("accounts") or {})
+
+    maybe_export_openrouter_key_models()
 
     wallets: dict[str, Any] = {}
     for name in enabled:

@@ -293,6 +293,8 @@ class RenderContractTest(unittest.TestCase):
         self.assertIn("getUTCHours()", html)
         self.assertIn("spendChip('24ч'", html)
         self.assertIn("spendChip('7д'", html)
+        self.assertIn("экспорт с аккаунта (key-only)", html)
+        self.assertIn("openrouter-key-export", html)
 
     def test_compose_and_env_example_expose_slots_without_secrets(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
@@ -314,6 +316,17 @@ class RenderContractTest(unittest.TestCase):
         self.assertIn("SITE_TITLE=", example)
         self.assertIn("OPENROUTER_KEY_ONLY=", example)
         self.assertIn("DISPLAY_TZ=", example)
+        self.assertIn("OPENROUTER_TRACKED_KEY_HASH=${OPENROUTER_TRACKED_KEY_HASH:-}", compose)
+        self.assertIn("OPENROUTER_EXPORT_PATH=${OPENROUTER_EXPORT_PATH:-/app/export/openrouter_key_models.json}", compose)
+        self.assertIn("/opt/usage-dashboard/export:/app/export", compose)
+        self.assertNotIn("/opt/usage-dashboard/export:/app/export:ro", compose)
+        self.assertIn("/opt/usage-dashboard/export:/app/export:ro", alan)
+        self.assertIn("OPENROUTER_IMPORT_PATH=${OPENROUTER_IMPORT_PATH:-/app/export/openrouter_key_models.json}", alan)
+        self.assertNotIn("OPENROUTER_TRACKED_KEY_HASH", alan)
+        self.assertNotIn("OPENROUTER_EXPORT_PATH", alan)
+        self.assertIn("OPENROUTER_TRACKED_KEY_HASH=", example)
+        self.assertIn("OPENROUTER_EXPORT_PATH=", example)
+        self.assertIn("OPENROUTER_IMPORT_PATH=", example)
         blob = compose + alan + example
         self.assertNotIn(SECRET, blob)
         self.assertNotRegex(blob, r"sk-[a-zA-Z0-9]{8,}")
