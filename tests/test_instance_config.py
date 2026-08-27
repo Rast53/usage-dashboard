@@ -287,7 +287,6 @@ class RenderContractTest(unittest.TestCase):
         self.assertIn("GET /api/v1/key (key-only)", html)
         self.assertIn("OpenRouter · key", html)
         self.assertIn("hidePartialSpendChips", html)
-        self.assertIn("renderSpendCalendar", html)
         self.assertNotIn("<table class=\"cal\">", html)
         self.assertNotIn("<th>Итого</th>", html)
         self.assertIn("<th class=\"num\">вчера</th>", html)

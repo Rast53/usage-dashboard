@@ -176,19 +176,6 @@
   table.models td.model { font-family: var(--mono); font-size: 12px; }
   table.models tr:last-child td { border-bottom: 0; }
   .models-note { font-size: 12px; color: var(--muted); padding: 12px 14px; }
-  .win-row {
-    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px; margin: 0 0 12px;
-  }
-  .win-k {
-    color: var(--muted); font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.04em; font-weight: 600;
-  }
-  .win-v {
-    font-family: var(--mono); font-size: 13px; margin-top: 2px;
-    font-variant-numeric: tabular-nums;
-  }
-  .cal-note { font-size: 10px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
   @media (max-width: 720px) {
     .wrap { padding: 18px 12px 36px; }
     .stats { grid-template-columns: 1fr 1fr; }
@@ -717,15 +704,6 @@ function detailsSimple(w, extraRows, source) {
     html += '<div class="details-src ' + (w.status === 'manual' ? 'warn-text' : 'bad-text') + '">' + escapeHtml(w.error) + '</div>';
   }
   return html;
-}
-
-function calendarCell(row) {
-  if (!row || row.spent == null || row.partial) return '—';
-  return '$' + money(row.spent);
-}
-
-function calendarWindowFilled(row) {
-  return !!(row && row.spent != null && !row.partial);
 }
 
 function renderProviderCard(w, spec) {
