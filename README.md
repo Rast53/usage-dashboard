@@ -37,7 +37,7 @@ Browser → Traefik (usage.ragpt.ru)
 - `GET /api/quota` — кеш последних wallet-проб
 - `POST /api/refresh` — принудительное обновление проб
 
-`GET /api/summary` также отдаёт `site_title` и `enabled_providers` (из env `SITE_TITLE` / `PROVIDERS`). Пустые значения = текущее поведение: заголовок «Мои подписки» и все 6 провайдеров.
+`GET /api/summary` также отдаёт `site_title` и `enabled_providers` (из env `SITE_TITLE` / `PROVIDERS`). Пустые значения = текущее поведение: заголовок «Мои подписки» и все 6 провайдеров. `display_tz` / `display_tz_label` / `hide_partial_spend_chips` — пояс UI (дефолт UTC; инстанс Алана: `Europe/Moscow` / МСК, без чипов snapshot 24ч/7д).
 
 ## Local run
 ```bash
@@ -57,9 +57,9 @@ python3 app.py
 Live: Dockhand **stack 7** on `tw-msk-server`, `https://usage.ragpt.ru`.
 Push to `main` → git webhook → build/recreate. Container `usage-dashboard-usage-dashboard-1`.
 
-Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI / COMMANDCODE / KIMI / OPENCODE_GO + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY` + optional `COMMANDCODE_PROXY` / `KIMI_PROXY` / `KIMI_CODE_BASE_URL` / `OPENCODE_GO_PROXY` / `OPENCODE_GO_BASE_URL` + optional `PROVIDERS` / `SITE_TITLE` + optional `OPENROUTER_TRACKED_KEY_HASH` / `OPENROUTER_EXPORT_PATH` on stack 7 and `OPENROUTER_IMPORT_PATH` on alan). Do not commit keys or proxy passwords. `ZAI_PROXY`, `COMMANDCODE_API_KEY`, `KIMI_API_KEY` and `OPENCODE_GO_API_KEY` are `is_secret`.
+Secrets/env: Dockhand `stack_environment_variables` (DEEPSEEK / OPENROUTER×2 / ZAI / COMMANDCODE / KIMI / OPENCODE_GO + `OPENROUTER_BASE_URL` / `OPENROUTER_PROXY` / `OPENROUTER_SSL_NO_VERIFY` + `ZAI_PROXY` + optional `COMMANDCODE_PROXY` / `KIMI_PROXY` / `KIMI_CODE_BASE_URL` / `OPENCODE_GO_PROXY` / `OPENCODE_GO_BASE_URL` + optional `PROVIDERS` / `SITE_TITLE` / `OPENROUTER_KEY_ONLY` / `DISPLAY_TZ` + optional `OPENROUTER_TRACKED_KEY_HASH` / `OPENROUTER_EXPORT_PATH` on stack 7 and `OPENROUTER_IMPORT_PATH` on alan). Do not commit keys or proxy passwords. `ZAI_PROXY`, `COMMANDCODE_API_KEY`, `KIMI_API_KEY` and `OPENCODE_GO_API_KEY` are `is_secret`.
 
-Второй инстанс (после merge, ops): тот же образ, `PROVIDERS=opencode-go,openrouter`, `OPENROUTER_KEY_ONLY=1`, `SITE_TITLE=Подписки — Алан`, `OPENROUTER_BASE_URL=http://100.69.177.71:8444`, отдельный volume, Traefik `usage.alan.ragpt.ru` **без** basicauth. Основной `usage.ragpt.ru` не задаёт `PROVIDERS` / `SITE_TITLE` / `OPENROUTER_KEY_ONLY` (дефолт = все 6, OpenRouter credits+management). Ключ Алана (`OPENROUTER_API_KEY`, `OPENCODE_GO_API_KEY`) только в Dockhand secret (`is_secret=1`); значение OpenRouter — из openclaw.json контейнера alanclaw-openclaw, не из git.
+Второй инстанс (после merge, ops): тот же образ, `PROVIDERS=opencode-go,openrouter`, `OPENROUTER_KEY_ONLY=1`, `DISPLAY_TZ=Europe/Moscow`, `SITE_TITLE=Подписки — Алан`, `OPENROUTER_BASE_URL=http://100.69.177.71:8444`, отдельный volume, Traefik `usage.alan.ragpt.ru` **без** basicauth. Основной `usage.ragpt.ru` не задаёт `PROVIDERS` / `SITE_TITLE` / `OPENROUTER_KEY_ONLY` / `DISPLAY_TZ` (дефолт = все 6, OpenRouter credits+management, timestamps UTC). Ключ Алана (`OPENROUTER_API_KEY`, `OPENCODE_GO_API_KEY`) только в Dockhand secret (`is_secret=1`); значение OpenRouter — из openclaw.json контейнера alanclaw-openclaw, не из git.
 
 Data volume: `/opt/usage-dashboard/data` → `/app/data`. Historical `snapshots.jsonl` stays on the volume (24h spend); do not truncate it.
 

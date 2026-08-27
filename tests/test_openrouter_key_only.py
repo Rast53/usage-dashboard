@@ -87,9 +87,10 @@ class ProbeOpenrouterKeyOnlyTest(unittest.TestCase):
         self.assertEqual(result["key"]["usage_monthly"], 18.0)
         self.assertEqual(result["key"]["limit"], 50.0)
         self.assertEqual(result["key"]["limit_remaining"], 7.5)
-        self.assertIn("−$1.25 today (UTC, key)", result["remaining_summary"])
-        self.assertIn("−$6.50 week", result["remaining_summary"])
-        self.assertIn("−$18.00 month", result["remaining_summary"])
+        self.assertIn("−$1.25 сутки UTC", result["remaining_summary"])
+        self.assertIn("−$6.50 неделя UTC (пн–вс)", result["remaining_summary"])
+        self.assertIn("−$18.00 месяц UTC", result["remaining_summary"])
+        self.assertNotIn("today (UTC, key)", result["remaining_summary"])
         self.assertNotIn("left", result["remaining_summary"])
         self.assertEqual(calls, [app.openrouter_api_url("/api/v1/key")])
         self.assertFalse(any("/credits" in u or "/keys" in u or "/activity" in u for u in calls))
@@ -160,15 +161,20 @@ class BuildOpenrouterKeyOnlyTest(unittest.TestCase):
         self.assertEqual(wallet["keys"], [])
         self.assertIsNone(wallet["usage_daily_all_keys"])
         self.assertEqual(wallet["spend_24h"]["spent"], 2.5)
-        self.assertIn("−$1.25 today (UTC, key)", wallet["remaining_summary"])
-        self.assertIn("−$6.50 week", wallet["remaining_summary"])
-        self.assertIn("−$18.00 month", wallet["remaining_summary"])
+        self.assertIn("−$1.25 сутки UTC", wallet["remaining_summary"])
+        self.assertIn("−$6.50 неделя UTC (пн–вс)", wallet["remaining_summary"])
+        self.assertIn("−$18.00 месяц UTC", wallet["remaining_summary"])
+        self.assertNotIn("today (UTC, key)", wallet["remaining_summary"])
         self.assertNotIn("left", wallet["remaining_summary"])
         self.assertNotIn("999", wallet["remaining_summary"])
         self.assertNotIn("888", wallet["remaining_summary"])
         self.assertNotIn("111", wallet["remaining_summary"])
         self.assertEqual(wallet["source"], "openrouter-key-api+local-snapshots")
         self.assertFalse(wallet["models"]["available"])
+        cal = wallet["spend_calendar"]
+        self.assertEqual(cal["tz"], "Europe/Moscow")
+        self.assertEqual(cal["total"]["spent"], 42.5)
+        self.assertTrue(cal["yesterday"]["partial"] or cal["yesterday"]["spent"] is None)
 
     def test_default_builder_keeps_account_remaining(self) -> None:
         probe = {
@@ -247,7 +253,7 @@ class SummaryKeyOnlySecretsTest(unittest.TestCase):
             "error": None,
             "probed_at": "2026-08-27T00:00:00Z",
             "models": app.models_unavailable("GET /api/v1/activity требует management key"),
-            "remaining_summary": "−$1.25 today (UTC, key) · −$6.50 week · −$18.00 month",
+            "remaining_summary": "−$1.25 сутки UTC · −$6.50 неделя UTC (пн–вс) · −$18.00 месяц UTC",
         }
         env = _env_without("PROVIDERS", "SITE_TITLE", "OPENROUTER_KEY_ONLY")
         env.update({
@@ -278,7 +284,15 @@ class SummaryKeyOnlySecretsTest(unittest.TestCase):
         self.assertIsNone(wallet["remaining"])
         self.assertEqual(wallet["total_usage"], 42.5)
         self.assertEqual(wallet["usage_daily"], 1.25)
-        self.assertIn("today (UTC, key)", wallet["remaining_summary"])
+        self.assertIn("сутки UTC", wallet["remaining_summary"])
+        self.assertEqual(payload["display_tz"], "Europe/Moscow")
+        self.assertEqual(payload["display_tz_label"], "МСК")
+        self.assertTrue(payload["hide_partial_spend_chips"])
+        self.assertTrue(payload["openrouter_key_only"])
+        cal = wallet["spend_calendar"]
+        self.assertEqual(cal["tz_label"], "МСК")
+        self.assertEqual(cal["total"]["spent"], 42.5)
+        self.assertIn("МСК", cal["note"])
         blob = json.dumps(payload)
         self.assertNotIn(SECRET, blob)
         self.assertNotIn(MGMT, blob)

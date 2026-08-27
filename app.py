@@ -36,6 +36,12 @@ QUOTA_PROBE_SECONDS = int(os.environ.get("USAGE_QUOTA_PROBE_SECONDS", "300"))
 USAGE_WINDOW_HOURS = int(os.environ.get("USAGE_WINDOW_HOURS", "24"))
 USAGE_WINDOW_7D_HOURS = 168
 SPEND_SERIES_DAYS = 8
+# Today + 30 complete prior calendar days for Alan MSK table.
+CALENDAR_SPEND_DAYS = 31
+# Moscow is UTC+3 year-round (no DST since 2014). Avoid tzdata in slim image.
+MSK_TZ = timezone(timedelta(hours=3), name="MSK")
+DISPLAY_TZ_UTC = "UTC"
+DISPLAY_TZ_MSK = "Europe/Moscow"
 NO_MODEL_BREAKDOWN = "нет разбивки от провайдера"
 NO_FRESH_EXPORT = "нет свежих данных экспорта"
 OPENROUTER_KEY_EXPORT_NOTE = "экспорт с аккаунта (key-only)"
@@ -320,6 +326,40 @@ def get_openrouter_ssl_verify() -> bool:
 def openrouter_key_only() -> bool:
     """OPENROUTER_KEY_ONLY=1 → GET /api/v1/key only; no credits/keys/activity."""
     return _env_flag("OPENROUTER_KEY_ONLY", default=False)
+
+
+def get_display_tz() -> str:
+    """IANA tz for UI timestamps. Unset = UTC; key-only without DISPLAY_TZ = Moscow."""
+    raw = os.environ.get("DISPLAY_TZ", "").strip()
+    if raw:
+        key = raw.lower().replace(" ", "")
+        if key in {"utc", "gmt", "etc/utc", "z"}:
+            return DISPLAY_TZ_UTC
+        if key in {"europe/moscow", "msk", "moscow", "msd"}:
+            return DISPLAY_TZ_MSK
+        return raw
+    if openrouter_key_only():
+        return DISPLAY_TZ_MSK
+    return DISPLAY_TZ_UTC
+
+
+def display_tz_label(name: str | None = None) -> str:
+    tz = name or get_display_tz()
+    if tz == DISPLAY_TZ_MSK:
+        return "МСК"
+    return "UTC"
+
+
+def display_tzinfo(name: str | None = None) -> timezone:
+    tz = name or get_display_tz()
+    if tz == DISPLAY_TZ_MSK:
+        return MSK_TZ
+    return timezone.utc
+
+
+def hide_partial_spend_chips() -> bool:
+    """Alan page: do not render snapshot 24h/7d chips (often partial with ~)."""
+    return openrouter_key_only() or get_display_tz() == DISPLAY_TZ_MSK
 
 
 def get_openrouter_tracked_key_hash() -> str | None:
@@ -1072,17 +1112,20 @@ def _float_or_none(value: Any) -> float | None:
 
 
 def _openrouter_key_remaining_summary(key: dict[str, Any]) -> str:
-    """Spend-only summary for key-only mode. Never includes account remaining/credits."""
+    """Spend-only summary for key-only mode. Never includes account remaining/credits.
+
+    OpenRouter windows are UTC calendar (day / Mon–Sun week / month), not MSK.
+    """
     parts: list[str] = []
     daily = _float_or_none(key.get("usage_daily"))
     weekly = _float_or_none(key.get("usage_weekly"))
     monthly = _float_or_none(key.get("usage_monthly"))
     if daily is not None:
-        parts.append(f"−${daily:.2f} today (UTC, key)")
+        parts.append(f"−${daily:.2f} сутки UTC")
     if weekly is not None:
-        parts.append(f"−${weekly:.2f} week")
+        parts.append(f"−${weekly:.2f} неделя UTC (пн–вс)")
     if monthly is not None:
-        parts.append(f"−${monthly:.2f} month")
+        parts.append(f"−${monthly:.2f} месяц UTC")
     return " · ".join(parts)
 
 
@@ -1390,6 +1433,9 @@ def build_openrouter_wallet(or_probe: dict[str, Any] | None) -> dict[str, Any] |
         "spend_24h": spend,
         "spend_7d": spend_7d,
         "spend_series_7d": compute_openrouter_spend_series_7d(total_usage),
+        "spend_calendar": (
+            compute_openrouter_calendar_spend(total_usage) if key_only else None
+        ),
         "spent_summary": spent_summary,
         "models": models,
         "source": (
@@ -1772,18 +1818,22 @@ def compute_spend_series_7d(
     note: str,
     now: datetime | None = None,
     days: int = SPEND_SERIES_DAYS,
+    tz: timezone | None = None,
 ) -> dict[str, Any]:
-    """Daily spend points for an 8-day sparkline (UTC calendar days, including today).
+    """Daily spend points for a sparkline (calendar days in tz, including today).
 
-    spent[day] = delta(last observation on day, last observation before day start).
-    Missing days stay null (do not invent 0). Window reset → spent null + gap.
+    Default tz is UTC (8-day sparkline on usage.ragpt.ru). spent[day] = delta(
+    last observation on day, last observation before day start). Missing days stay
+    null (do not invent 0). Window reset → spent null + gap.
     """
-    now_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    tzinfo = tz or timezone.utc
+    now_dt = (now or datetime.now(timezone.utc)).astimezone(tzinfo)
     result = _empty_spend_series(unit, note, days=days)
     series_points = list(points)
     if current is not None:
+        utc_now = now_dt.astimezone(timezone.utc)
         series_points.append(
-            (now_dt.timestamp(), now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"), float(current))
+            (utc_now.timestamp(), utc_now.strftime("%Y-%m-%dT%H:%M:%SZ"), float(current))
         )
     series_points.sort(key=lambda item: item[0])
     if len(series_points) < 2:
@@ -1806,7 +1856,7 @@ def compute_spend_series_7d(
 
     for offset in range(days):
         day = today - timedelta(days=days - 1 - offset)
-        day_start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        day_start = datetime(day.year, day.month, day.day, tzinfo=tzinfo)
         next_midnight = day_start + timedelta(days=1)
         start_ts = day_start.timestamp()
         end_excl = next_midnight.timestamp()
@@ -1905,6 +1955,9 @@ def compute_deepseek_spend_series_7d(
 def compute_openrouter_spend_series_7d(
     current_total_usage: float | None,
     now: datetime | None = None,
+    *,
+    tz: timezone | None = None,
+    days: int = SPEND_SERIES_DAYS,
 ) -> dict[str, Any]:
     points: list[tuple[float, str, float]] = []
     for obj in load_snapshot_rows():
@@ -1922,7 +1975,103 @@ def compute_openrouter_spend_series_7d(
         unit="$",
         note="OpenRouter daily total_usage delta from local snapshots",
         now=now,
+        tz=tz,
+        days=days,
     )
+
+
+def _complete_calendar_spent(point: dict[str, Any] | None) -> float | None:
+    if not point or point.get("spent") is None:
+        return None
+    if point.get("partial") or point.get("gap"):
+        return None
+    try:
+        return float(point["spent"])
+    except (TypeError, ValueError):
+        return None
+
+
+def _calendar_window(points: list[dict[str, Any]], asked_days: int) -> dict[str, Any]:
+    """Sum of `asked_days` complete calendar days ending yesterday (today excluded)."""
+    empty: dict[str, Any] = {
+        "spent": None,
+        "partial": True,
+        "gap": "no-history",
+        "complete_days": 0,
+        "asked_days": asked_days,
+        "from": None,
+        "to": None,
+    }
+    if len(points) < asked_days + 1:
+        return empty
+    chunk = points[-(asked_days + 1) : -1]
+    vals = [_complete_calendar_spent(p) for p in chunk]
+    complete = [v for v in vals if v is not None]
+    out = {
+        "spent": None,
+        "partial": True,
+        "gap": "incomplete",
+        "complete_days": len(complete),
+        "asked_days": asked_days,
+        "from": chunk[0].get("date") if chunk else None,
+        "to": chunk[-1].get("date") if chunk else None,
+    }
+    if len(complete) < asked_days:
+        return out
+    out.update({
+        "spent": round(sum(complete), 6),
+        "partial": False,
+        "gap": None,
+    })
+    return out
+
+
+def compute_openrouter_calendar_spend(
+    current_total_usage: float | None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """MSK calendar windows from snapshots: yesterday / 7d / 30d complete days + total.
+
+    Incomplete windows stay spent=null (UI shows em dash, no tilde). Total is
+    lifetime key.usage from the API, not a snapshot delta.
+    """
+    series = compute_openrouter_spend_series_7d(
+        current_total_usage,
+        now=now,
+        tz=MSK_TZ,
+        days=CALENDAR_SPEND_DAYS,
+    )
+    points = list(series.get("points") or [])
+    yesterday_pt = points[-2] if len(points) >= 2 else None
+    y_spent = _complete_calendar_spent(yesterday_pt)
+    yesterday = {
+        "date": (yesterday_pt or {}).get("date"),
+        "spent": y_spent,
+        "partial": y_spent is None,
+        "gap": None if y_spent is not None else (
+            (yesterday_pt or {}).get("gap") or ("incomplete" if yesterday_pt else "no-history")
+        ),
+    }
+    total_spent = _float_or_none(current_total_usage)
+    return {
+        "tz": DISPLAY_TZ_MSK,
+        "tz_label": "МСК",
+        "yesterday": yesterday,
+        "days_7": _calendar_window(points, 7),
+        "days_30": _calendar_window(points, 30),
+        "total": {
+            "spent": total_spent,
+            "partial": False,
+            "gap": None if total_spent is not None else "no-history",
+            "source": "key.usage",
+        },
+        "note": (
+            "полные сутки МСК (UTC+3); сегодняшние неполные сутки не входят. "
+            "Итого — расход ключа за всё время. Окна OpenRouter API "
+            "(сутки / неделя пн–вс / месяц) — UTC."
+        ),
+    }
 
 
 def compute_zai_spend_series_7d(
@@ -2973,6 +3122,10 @@ def collect_state(force_quota: bool = False) -> dict[str, Any]:
         "updated_at": now_iso(),
         "site_title": get_site_title(),
         "enabled_providers": list(enabled),
+        "display_tz": get_display_tz(),
+        "display_tz_label": display_tz_label(),
+        "hide_partial_spend_chips": hide_partial_spend_chips(),
+        "openrouter_key_only": openrouter_key_only(),
         "providers": {
             "wallets": {
                 "label": "Wallets",
@@ -3046,6 +3199,10 @@ def summary() -> dict[str, Any]:
         data = json.loads(json.dumps(_state))
     data["site_title"] = get_site_title()
     data["enabled_providers"] = list(enabled)
+    data["display_tz"] = get_display_tz()
+    data["display_tz_label"] = display_tz_label()
+    data["hide_partial_spend_chips"] = hide_partial_spend_chips()
+    data["openrouter_key_only"] = openrouter_key_only()
     wallets = data.get("wallets") if isinstance(data.get("wallets"), dict) else {}
     data["wallets"] = {key: wallets[key] for key in enabled if key in wallets}
     providers = data.get("providers") if isinstance(data.get("providers"), dict) else {}
