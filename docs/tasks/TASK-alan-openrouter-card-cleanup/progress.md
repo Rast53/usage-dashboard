@@ -3,15 +3,22 @@
 | Дата | Шаг | Статус | Комментарий |
 |---|---|---|---|
 | 2026-08-27 | Создана | ✅ | Из пакета cloud-agent (spec отсутствовал в репо) |
-| 2026-08-27 | Spec + plan | ⏳ | materialize |
-| 2026-08-27 | Backend | ⏳ | yesterday-only + windows/note; calendar dates |
-| 2026-08-27 | UI | ⏳ | сводная rolling МСК; win-row; per-model даты |
-| 2026-08-27 | Tests | ⏳ | |
+| 2026-08-27 | Spec + plan | ✅ | materialize; ops stack 8 — после merge |
+| 2026-08-27 | Backend | ✅ | yesterday-only `usage_24h`; `windows`+даты в note; calendar note с датами МСК |
+| 2026-08-27 | UI | ✅ | сводная rolling 24ч МСК; win-row вместо мини-таблицы; per-model вчера/7/30 |
+| 2026-08-27 | Tests | ✅ | `python3 -m unittest discover -s tests -q` — 111 passed |
 | 2026-08-27 | Ops E2E | ⏳ | hermes-chuwi после merge; деплой не эта ветка |
 
 ## Actual
 
-<!-- заполняется при закрытии -->
+Cursor cloud-agent: rolling-24ч в сводной Алана, чистка карточки OpenRouter, per-model с явными датами. Оценка S. Деплой не делался.
+
+## 2026-08-27 — build notes
+
+- Сводная «Расход 24ч» при `hide_partial_spend_chips`: rolling `spend_24h` + подпись окна `fmtDateShort(now−24ч) – now` (МСК). usage.ragpt.ru — прежний текст «7д на карточках».
+- Карточка OpenRouter: `.win-row` вчера / 7 дней / 30 дней / всего, без `<table class="cal">`. Неполные окна по-прежнему «—».
+- Per-model export: `usage_24h` = вчерашние UTC-сутки (schema 1, имя поля то же). Колонки вчера / 7 дней / 30 дней. Сноска с датами UTC. «экспорт с аккаунта» убран. `aggregate_openrouter_models` (аккаунт) не менялся.
+- Секреты не коммитились.
 
 Sources used:
 - AGENTMAP.md — нет в корне Rast53/usage-dashboard (репо не публикует указатель)
