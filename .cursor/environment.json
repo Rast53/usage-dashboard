@@ -1,0 +1,11 @@
+{
+  "name": "usage-dashboard",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "uvicorn",
+      "command": ". .venv/bin/activate && export USAGE_STATIC_DIR=\"$PWD/static\" USAGE_DATA_DIR=\"$PWD/data\" USAGE_PORT=3210 && exec uvicorn app:app --host 0.0.0.0 --port 3210"
+    }
+  ],
+  "ports": [{ "name": "dashboard", "port": 3210 }]
+}

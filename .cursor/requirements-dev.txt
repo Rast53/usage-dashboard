@@ -1,0 +1,6 @@
+# Dev/runtime deps for Cloud Agent (mirrors prod Dockerfile + test runner).
+# Prod image pins: fastapi, uvicorn[standard], PySocks.
+fastapi
+uvicorn[standard]
+PySocks
+pytest
