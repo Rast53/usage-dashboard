@@ -27,7 +27,9 @@ services:
       - OPENROUTER_KEY_ONLY=${OPENROUTER_KEY_ONLY:-1}
       - DISPLAY_TZ=${DISPLAY_TZ:-Europe/Moscow}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-http://100.69.177.71:8444}
+      # OpenRouter geo-blocks RU IPs (403 security policy) — always go via fleet proxy.
+      - OPENROUTER_PROXY=${OPENROUTER_PROXY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai}
       - OPENROUTER_IMPORT_PATH=${OPENROUTER_IMPORT_PATH:-/app/export/openrouter_key_models.json}
     extra_hosts:
       - "host.docker.internal:host-gateway"
