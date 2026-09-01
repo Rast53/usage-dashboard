@@ -248,6 +248,44 @@ class InstanceConfigCollectTest(unittest.TestCase):
         self.assertNotIn("DeepSeek wallet", notes)
         self.assertNotIn("OpenRouter wallet", notes)
 
+    def test_alan_allowlist_probes_commandcode_not_ivan_wallets(self) -> None:
+        probes = self._probes()
+        calls: list[str] = []
+        stacked = self._patch_probes(probes, calls)
+        env = _env_without("PROVIDERS", "SITE_TITLE")
+        env.update({
+            "PROVIDERS": "opencode-go,openrouter,commandcode",
+            "SITE_TITLE": "Подписки — Алан",
+            "OPENROUTER_KEY_ONLY": "1",
+        })
+        try:
+            with patch.dict("os.environ", env, clear=True):
+                state = app.collect_state(force_quota=True)
+                app._state = state
+                payload = app.summary()
+        finally:
+            for p in reversed(stacked):
+                p.stop()
+        self.assertEqual(calls, ["openrouter", "commandcode", "opencode-go"])
+        self.assertEqual(
+            payload["enabled_providers"],
+            ["opencode-go", "openrouter", "commandcode"],
+        )
+        self.assertEqual(
+            set(payload["wallets"]),
+            {"opencode-go", "openrouter", "commandcode"},
+        )
+        self.assertEqual(payload["site_title"], "Подписки — Алан")
+        self.assertTrue(payload["wallets"]["commandcode"]["ok"])
+        self.assertEqual(payload["wallets"]["commandcode"]["plan_label"], "GOAT")
+        notes = " ".join(payload.get("notes") or [])
+        self.assertIn("Command Code wallet", notes)
+        self.assertIn("OpenCode Go", notes)
+        self.assertIn("OpenRouter wallet", notes)
+        self.assertNotIn("DeepSeek wallet", notes)
+        self.assertNotIn("Z.AI wallet", notes)
+        self.assertNotIn("Kimi Coding wallet", notes)
+
     def test_summary_filters_stale_wallets_from_state(self) -> None:
         app._state = {
             "updated_at": "t",
@@ -314,12 +352,14 @@ class RenderContractTest(unittest.TestCase):
         self.assertIn("DISPLAY_TZ=${DISPLAY_TZ:-}", compose)
         self.assertNotIn("OPENROUTER_KEY_ONLY=1", compose)
         self.assertNotIn("OPENROUTER_KEY_ONLY=${OPENROUTER_KEY_ONLY:-1}", compose)
-        self.assertIn("PROVIDERS=${PROVIDERS:-opencode-go,openrouter}", alan)
+        self.assertIn("PROVIDERS=${PROVIDERS:-opencode-go,openrouter,commandcode}", alan)
+        self.assertIn("COMMANDCODE_API_KEY=${COMMANDCODE_API_KEY:-}", alan)
+        self.assertIn("COMMANDCODE_PROXY=${COMMANDCODE_PROXY:-}", alan)
         self.assertIn("OPENROUTER_KEY_ONLY=${OPENROUTER_KEY_ONLY:-1}", alan)
         self.assertIn("DISPLAY_TZ=${DISPLAY_TZ:-Europe/Moscow}", alan)
         self.assertNotIn("DISPLAY_TZ=${DISPLAY_TZ:-Europe/Moscow}", compose)
         self.assertIn("OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}", alan)
-        self.assertIn("OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-http://100.69.177.71:8444}", alan)
+        self.assertIn("OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai}", alan)
         self.assertIn("SITE_TITLE=${SITE_TITLE:-Подписки — Алан}", alan)
         self.assertIn("PROVIDERS=", example)
         self.assertIn("SITE_TITLE=", example)
