@@ -1,9 +1,11 @@
 # Dockhand autodeploy on tw-msk-server — инстанс для Алана
-# (TASK-alan-usage-page + TASK-alan-openrouter-key-card + TASK-alan-page-msk-time-and-labels).
-# Тот же образ/код, что у основного стека, но: PROVIDERS=opencode-go,openrouter, OPENROUTER_KEY_ONLY=1,
-# свой data-volume, общий export-volume :ro, traefik usage.alan.ragpt.ru БЕЗ basicauth (явное решение Ивана 2026-08-25).
+# (TASK-alan-usage-page + TASK-alan-openrouter-key-card + TASK-alan-commandcode-card).
+# Тот же образ/код, что у основного стека, но: PROVIDERS=opencode-go,openrouter,commandcode,
+# OPENROUTER_KEY_ONLY=1, свой data-volume, общий export-volume :ro,
+# traefik usage.alan.ragpt.ru БЕЗ basicauth (явное решение Ивана 2026-08-25).
 # Ключи Алана — только в Dockhand stack env (is_secret=1). Never commit keys.
 # OPENROUTER_API_KEY: из openclaw.json контейнера alanclaw-openclaw (ops, is_secret=1).
+# COMMANDCODE_API_KEY: подписка Алана GOAT с 01.09 (ops, is_secret=1).
 services:
   usage-dashboard:
     build: .
@@ -18,12 +20,15 @@ services:
       - USAGE_QUOTA_PROBE_SECONDS=${USAGE_QUOTA_PROBE_SECONDS:-300}
       - USAGE_DATA_DIR=/app/data
       - USAGE_STATIC_DIR=/app/static
-      - PROVIDERS=${PROVIDERS:-opencode-go,openrouter}
+      - PROVIDERS=${PROVIDERS:-opencode-go,openrouter,commandcode}
       - SITE_TITLE=${SITE_TITLE:-Подписки — Алан}
       - OPENCODE_GO_API_KEY=${OPENCODE_GO_API_KEY:-}
       # Optional: HTTP CONNECT / SOCKS5(h) if opencode.ai is blocked from the container.
       - OPENCODE_GO_PROXY=${OPENCODE_GO_PROXY:-}
       - OPENCODE_GO_BASE_URL=${OPENCODE_GO_BASE_URL:-}
+      - COMMANDCODE_API_KEY=${COMMANDCODE_API_KEY:-}
+      # Optional: HTTP CONNECT / SOCKS5(h) if api.commandcode.ai is blocked from the container.
+      - COMMANDCODE_PROXY=${COMMANDCODE_PROXY:-}
       - OPENROUTER_KEY_ONLY=${OPENROUTER_KEY_ONLY:-1}
       - DISPLAY_TZ=${DISPLAY_TZ:-Europe/Moscow}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
