@@ -72,6 +72,15 @@ OPENCODE_GO_CAPS: dict[str, float] = {
     "weekly": 30.0,
     "monthly": 60.0,
 }
+# Mirror frontend pill semantics: ok if delta_pp <= 5, warn if <= 20, else danger.
+PACE_OK_DELTA_PP = 5
+PACE_WARN_DELTA_PP = 20
+PACE_SESSION_MINUTES = 300
+PACE_WEEKLY_MINUTES = 10080
+PACE_WINDOW_SPECS: tuple[tuple[str, str, int], ...] = (
+    ("session", "5h", PACE_SESSION_MINUTES),
+    ("weekly", "weekly", PACE_WEEKLY_MINUTES),
+)
 # Published weekly request quotas (Kimi Code membership docs 2026-08-25). 5h cap is 200 for all tiers.
 KIMI_WEEKLY_PLANS: dict[float, str] = {
     1024.0: "Andante",
@@ -3241,6 +3250,140 @@ def _startup() -> None:
     threading.Thread(target=poller, name="usage-poller", daemon=True).start()
 
 
+def _pace_iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_pace_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    parsed = parse_snapshot_ts(value)
+    if parsed is None:
+        return None
+    return datetime.fromtimestamp(parsed[0], timezone.utc)
+
+
+def compute_pace_norm_percent(
+    next_reset_at: datetime | str,
+    window_minutes: float,
+    now: datetime,
+) -> float:
+    """Elapsed fraction of the window from next_reset_at, clamped 0..100."""
+    reset_dt = parse_pace_datetime(next_reset_at)
+    now_dt = parse_pace_datetime(now)
+    if reset_dt is None or now_dt is None or window_minutes <= 0:
+        return 0.0
+    remaining_minutes = (reset_dt - now_dt).total_seconds() / 60.0
+    elapsed_minutes = window_minutes - remaining_minutes
+    pct = (elapsed_minutes / window_minutes) * 100.0
+    return max(0.0, min(100.0, pct))
+
+
+def classify_pace(delta_pp: float) -> str:
+    if delta_pp <= PACE_OK_DELTA_PP:
+        return "ok"
+    if delta_pp <= PACE_WARN_DELTA_PP:
+        return "warn"
+    return "danger"
+
+
+def compute_pace_cooldown_minutes(delta_pp: float, window_minutes: float) -> float:
+    if delta_pp > PACE_OK_DELTA_PP:
+        return delta_pp * window_minutes / 100.0
+    return 0.0
+
+
+def compute_pace_data_age_seconds(probed_at: Any, now: datetime) -> int | None:
+    probed_dt = parse_pace_datetime(probed_at)
+    now_dt = parse_pace_datetime(now)
+    if probed_dt is None or now_dt is None:
+        return None
+    return max(0, int(round((now_dt - probed_dt).total_seconds())))
+
+
+def compute_pace_lane(
+    window: str,
+    window_minutes: int,
+    window_data: Any,
+    now: datetime,
+    probed_at: Any = None,
+) -> dict[str, Any] | None:
+    if not isinstance(window_data, dict):
+        return None
+    used_percent = _as_float(window_data.get("used_percent"))
+    reset_dt = parse_pace_datetime(window_data.get("next_reset_at"))
+    if used_percent is None or reset_dt is None:
+        return None
+    now_dt = parse_pace_datetime(now)
+    if now_dt is None:
+        return None
+    norm_percent = compute_pace_norm_percent(reset_dt, window_minutes, now_dt)
+    delta_pp = used_percent - norm_percent
+    return {
+        "window": window,
+        "window_minutes": window_minutes,
+        "used_percent": used_percent,
+        "norm_percent": round(norm_percent, 4),
+        "delta_pp": round(delta_pp, 4),
+        "pace": classify_pace(delta_pp),
+        "cooldown_minutes": round(
+            compute_pace_cooldown_minutes(delta_pp, window_minutes), 4
+        ),
+        "reset_at": _pace_iso(reset_dt),
+        "data_age_seconds": compute_pace_data_age_seconds(probed_at, now_dt),
+    }
+
+
+def build_pace_payload(
+    quota_cache: dict[str, Any] | None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    now_dt = parse_pace_datetime(now) if now is not None else datetime.now(timezone.utc)
+    if now_dt is None:
+        now_dt = datetime.now(timezone.utc)
+    accounts_raw = quota_cache.get("accounts") if isinstance(quota_cache, dict) else {}
+    if not isinstance(accounts_raw, dict):
+        accounts_raw = {}
+    ordered_keys: list[str] = []
+    for key in WALLET_PROBE_KEYS:
+        if key in accounts_raw:
+            ordered_keys.append(key)
+    for key in accounts_raw:
+        if key not in ordered_keys:
+            ordered_keys.append(str(key))
+
+    accounts_out: list[dict[str, Any]] = []
+    no_window: list[str] = []
+    for key in ordered_keys:
+        acc = accounts_raw.get(key)
+        if not isinstance(acc, dict):
+            no_window.append(str(key))
+            continue
+        probed_at = acc.get("probed_at")
+        lanes: list[dict[str, Any]] = []
+        for cache_key, window_label, minutes in PACE_WINDOW_SPECS:
+            lane = compute_pace_lane(
+                window_label,
+                minutes,
+                acc.get(cache_key),
+                now_dt,
+                probed_at,
+            )
+            if lane is not None:
+                lanes.append(lane)
+        if lanes:
+            accounts_out.append({"provider": str(key), "lanes": lanes})
+        else:
+            no_window.append(str(key))
+    return {
+        "accounts": accounts_out,
+        "no_window": no_window,
+        "server_now": _pace_iso(now_dt),
+    }
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     with _lock:
@@ -3312,6 +3455,13 @@ def wallets() -> dict[str, Any]:
 def quota() -> dict[str, Any]:
     with _quota_lock:
         return json.loads(json.dumps(_quota_cache))
+
+
+@app.get("/api/pace")
+def pace() -> dict[str, Any]:
+    with _quota_lock:
+        cache = json.loads(json.dumps(_quota_cache))
+    return build_pace_payload(cache)
 
 
 @app.post("/api/refresh")

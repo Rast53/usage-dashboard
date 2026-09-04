@@ -51,6 +51,39 @@
     display: grid; grid-template-columns: repeat(4, 1fr);
     gap: 12px; margin-bottom: 22px;
   }
+  .pace-panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 14px 16px 12px; margin-bottom: 22px;
+  }
+  .pace-caption { font-size: 11px; color: var(--muted); margin: 0 0 12px; }
+  .pace-plots {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  }
+  .pace-plot { min-width: 0; }
+  .pace-plot-title {
+    font-size: 12px; font-weight: 650; margin: 0 0 8px; letter-spacing: -0.01em;
+  }
+  .pace-svg { width: 100%; height: auto; display: block; }
+  .pace-reset { font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .pace-legend { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .pace-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px;
+  }
+  .pace-swatch {
+    width: 8px; height: 8px; border-radius: 99px; flex: 0 0 auto;
+  }
+  .pace-used { font-family: var(--mono); font-size: 12px; }
+  .pace-stale { font-size: 11px; color: var(--yellow); }
+  .pace-empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+  .pace-note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .pace-pill {
+    display: inline-block; border-radius: 999px; padding: 2px 10px;
+    font-size: 11px; font-weight: 600; border: 1px solid var(--border);
+    cursor: help;
+  }
+  .pace-pill.ok { color: var(--green); border-color: rgba(63,185,80,0.35); background: rgba(63,185,80,0.08); }
+  .pace-pill.warn { color: var(--yellow); border-color: rgba(210,153,34,0.35); background: rgba(210,153,34,0.08); }
+  .pace-pill.danger { color: var(--red); border-color: rgba(248,81,73,0.35); background: rgba(248,81,73,0.08); }
   .stat-card {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 14px; padding: 14px 16px;
@@ -176,6 +209,9 @@
   table.models td.model { font-family: var(--mono); font-size: 12px; }
   table.models tr:last-child td { border-bottom: 0; }
   .models-note { font-size: 12px; color: var(--muted); padding: 12px 14px; }
+  @media (max-width: 699px) {
+    .pace-plots { grid-template-columns: 1fr; }
+  }
   @media (max-width: 720px) {
     .wrap { padding: 18px 12px 36px; }
     .stats { grid-template-columns: 1fr 1fr; }
@@ -203,6 +239,9 @@
 
     <div id="errors"></div>
     <div class="stats" id="stats"></div>
+
+    <div class="section-label">Темп квот</div>
+    <div id="pace"></div>
 
     <div class="section-label">Провайдеры</div>
     <div class="card-grid" id="providers"></div>
@@ -950,6 +989,190 @@ function renderStats(data) {
     '<div class="stat-card"><div class="stat-k">Источники</div><div class="stat-v">' + live + ' / ' + allItems.length + '</div><div class="stat-sub">' + escapeHtml(labels) + '</div></div>';
 }
 
+/* ── Quota pace (server computes the rule; JS only renders) ── */
+const PACE_STALE_SECONDS = 600;
+const PACE_TOOLTIP = 'локальная оценка обгона линейного темпа, не официальный таймер провайдера';
+const PACE_COLORS = {
+  zai: '#38bdf8',
+  'zai-main': '#38bdf8',
+  commandcode: '#fb923c',
+  'commandcode-main': '#fb923c',
+  kimi: '#f472b6',
+  'kimi-main': '#f472b6',
+  'opencode-go': '#c084fc',
+  'opencode-go-main': '#c084fc'
+};
+const PACE_LABELS = {
+  'zai-main': 'z.ai',
+  zai: 'z.ai',
+  'commandcode-main': 'commandcode',
+  commandcode: 'commandcode',
+  'kimi-main': 'kimi',
+  kimi: 'kimi',
+  'opencode-go-main': 'opencode-go',
+  'opencode-go': 'opencode-go',
+  'deepseek-main': 'deepseek',
+  deepseek: 'deepseek',
+  'openrouter-main': 'openrouter',
+  openrouter: 'openrouter'
+};
+
+function paceProviderLabel(id) {
+  if (PACE_LABELS[id]) return PACE_LABELS[id];
+  return String(id || '').replace(/-main$/, '') || id;
+}
+function paceProviderColor(id) {
+  return PACE_COLORS[id] || '#8b9bb0';
+}
+function fmtResetMsk(v) {
+  const d = parseDate(v);
+  if (!d) return '—';
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit', month: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false
+  });
+  const map = {};
+  fmt.formatToParts(d).forEach(function(p) { map[p.type] = p.value; });
+  return map.day + '.' + map.month + ' ' + map.hour + ':' + map.minute + ' МСК';
+}
+function formatPacePill(lane) {
+  if (!lane || lane.pace === 'ok') {
+    return { text: 'темп ok', cls: 'ok' };
+  }
+  const minutes = Number(lane.cooldown_minutes) || 0;
+  const hours = minutes / 60;
+  const rounded = Math.round(hours * 10) / 10;
+  const label = (Math.abs(rounded - Math.round(rounded)) < 1e-9)
+    ? String(Math.round(rounded))
+    : String(rounded);
+  const cls = lane.pace === 'warn' ? 'warn' : 'danger';
+  return { text: 'темп +' + label + 'ч', cls: cls };
+}
+function lanesForWindow(accounts, windowKey) {
+  const out = [];
+  (accounts || []).forEach(function(acc) {
+    (acc.lanes || []).forEach(function(lane) {
+      if (lane && lane.window === windowKey) {
+        out.push({ provider: acc.provider, lane: lane });
+      }
+    });
+  });
+  return out;
+}
+function renderPaceSvg(rows) {
+  const left = 40, top = 12, right = 12, bottom = 28;
+  const vbW = 320, vbH = 300;
+  const plotW = vbW - left - right;
+  const plotH = vbH - top - bottom;
+  function xOf(pct) { return left + (Math.max(0, Math.min(100, Number(pct) || 0)) / 100) * plotW; }
+  function yOf(pct) { return top + plotH - (Math.max(0, Math.min(100, Number(pct) || 0)) / 100) * plotH; }
+  const x0 = xOf(0), y0 = yOf(0), x1 = xOf(100), y1 = yOf(100);
+  let dots = '';
+  rows.forEach(function(row) {
+    const color = paceProviderColor(row.provider);
+    const cx = xOf(row.lane.norm_percent);
+    const cy = yOf(row.lane.used_percent);
+    const name = escapeHtml(paceProviderLabel(row.provider));
+    dots += '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="6" fill="' + color +
+      '" stroke="#0b0f14" stroke-width="1.4"><title>' + name +
+      ' факт ' + escapeHtml(String(row.lane.used_percent)) +
+      '% · норма ' + escapeHtml(String(row.lane.norm_percent)) + '%</title></circle>';
+  });
+  return '<svg class="pace-svg" viewBox="0 0 ' + vbW + ' ' + vbH + '" role="img" aria-label="норма против факта">' +
+    '<rect x="' + left + '" y="' + top + '" width="' + plotW + '" height="' + plotH +
+      '" fill="rgba(10,14,23,0.35)" stroke="#243041" />' +
+    '<line x1="' + xOf(50) + '" y1="' + top + '" x2="' + xOf(50) + '" y2="' + (top + plotH) +
+      '" stroke="#243041" stroke-width="1" />' +
+    '<line x1="' + left + '" y1="' + yOf(50) + '" x2="' + (left + plotW) + '" y2="' + yOf(50) +
+      '" stroke="#243041" stroke-width="1" />' +
+    '<line x1="' + x0 + '" y1="' + y0 + '" x2="' + x1 + '" y2="' + y1 +
+      '" stroke="#8b9bb0" stroke-width="1.4" stroke-dasharray="5 4" />' +
+    dots +
+    '<text x="' + (left + plotW / 2) + '" y="' + (vbH - 6) +
+      '" text-anchor="middle" fill="#8b9bb0" font-size="10">норма %</text>' +
+    '<text x="12" y="' + (top + plotH / 2) +
+      '" text-anchor="middle" fill="#8b9bb0" font-size="10" transform="rotate(-90 12 ' +
+      (top + plotH / 2) + ')">факт %</text>' +
+    '<text x="' + left + '" y="' + (vbH - 6) + '" fill="#3d4f66" font-size="9">0</text>' +
+    '<text x="' + (left + plotW) + '" y="' + (vbH - 6) +
+      '" text-anchor="end" fill="#3d4f66" font-size="9">100</text>' +
+    '</svg>';
+}
+function renderPaceColumn(title, windowKey, accounts) {
+  const rows = lanesForWindow(accounts, windowKey);
+  const resets = [];
+  const seen = {};
+  rows.forEach(function(row) {
+    const key = row.lane.reset_at || '';
+    if (key && !seen[key]) { seen[key] = true; resets.push(key); }
+  });
+  let resetHtml = '';
+  if (resets.length === 1) {
+    resetHtml = '<div class="pace-reset">сброс: ' + escapeHtml(fmtResetMsk(resets[0])) + '</div>';
+  } else if (resets.length > 1) {
+    resetHtml = rows.map(function(row) {
+      return '<div class="pace-reset">' + escapeHtml(paceProviderLabel(row.provider)) +
+        ' сброс: ' + escapeHtml(fmtResetMsk(row.lane.reset_at)) + '</div>';
+    }).join('');
+  }
+  const legend = rows.map(function(row) {
+    const used = row.lane.used_percent;
+    const usedLabel = (used == null || Number.isNaN(Number(used))) ? '—' : (Math.round(Number(used)) + '%');
+    const pill = formatPacePill(row.lane);
+    const age = Number(row.lane.data_age_seconds);
+    const stale = Number.isFinite(age) && age > PACE_STALE_SECONDS
+      ? '<span class="pace-stale">данные устарели (' + Math.round(age / 60) + ' мин)</span>'
+      : '';
+    return '<div class="pace-row">' +
+      '<span class="pace-swatch" style="background:' + paceProviderColor(row.provider) + '"></span>' +
+      '<span>' + escapeHtml(paceProviderLabel(row.provider)) + '</span>' +
+      '<span class="pace-used">' + escapeHtml(usedLabel) + '</span>' +
+      '<span class="pace-pill ' + pill.cls + '" title="' + escapeHtml(PACE_TOOLTIP) + '">' +
+        escapeHtml(pill.text) + '</span>' +
+      stale +
+    '</div>';
+  }).join('');
+  return '<div class="pace-plot">' +
+    '<div class="pace-plot-title">' + escapeHtml(title) + '</div>' +
+    renderPaceSvg(rows) +
+    resetHtml +
+    '<div class="pace-legend">' + legend + '</div>' +
+  '</div>';
+}
+function renderPacePanel(data) {
+  if (!data || !Array.isArray(data.accounts)) {
+    return '<div class="pace-panel"><div class="pace-empty">нет данных</div></div>';
+  }
+  const note = (data.no_window && data.no_window.length)
+    ? '<div class="pace-note">без оконных лимитов: ' +
+      escapeHtml(data.no_window.map(paceProviderLabel).join(', ')) + '</div>'
+    : '';
+  return '<div class="pace-panel">' +
+    '<div class="pace-caption">норма vs факт · выше диагонали — быстрее календаря</div>' +
+    '<div class="pace-plots">' +
+      renderPaceColumn('5-часовое окно', '5h', data.accounts) +
+      renderPaceColumn('неделя', 'weekly', data.accounts) +
+    '</div>' +
+    note +
+  '</div>';
+}
+function renderPaceError() {
+  document.getElementById('pace').innerHTML =
+    '<div class="pace-panel"><div class="pace-empty">нет данных</div></div>';
+}
+function loadPace() {
+  return fetch('/api/pace').then(function(res) {
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }).then(function(data) {
+    document.getElementById('pace').innerHTML = renderPacePanel(data);
+  }).catch(function() {
+    renderPaceError();
+  });
+}
+
 async function refresh() {
   try { await fetch('/api/refresh', { method: 'POST' }); } catch(e) {}
   await load();
@@ -964,6 +1187,7 @@ function applyExpandedIds(idSet) {
   });
 }
 async function load() {
+  const paceDone = loadPace();
   try {
     const res = await fetch('/api/summary');
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1013,6 +1237,7 @@ async function load() {
   } catch(e) {
     document.getElementById('errors').innerHTML = '<div class="err">Ошибка загрузки: ' + escapeHtml(e.message) + '</div>';
   }
+  await paceDone;
 }
 load();
 setInterval(load, 30000);
