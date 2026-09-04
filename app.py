@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import calendar
 import html as html_lib
 import json
 import os
@@ -77,9 +78,11 @@ PACE_OK_DELTA_PP = 5
 PACE_WARN_DELTA_PP = 20
 PACE_SESSION_MINUTES = 300
 PACE_WEEKLY_MINUTES = 10080
-PACE_WINDOW_SPECS: tuple[tuple[str, str, int], ...] = (
+# Monthly duration is not a constant: minutes are derived from next_reset_at.
+PACE_WINDOW_SPECS: tuple[tuple[str, str, int | None], ...] = (
     ("session", "5h", PACE_SESSION_MINUTES),
     ("weekly", "weekly", PACE_WEEKLY_MINUTES),
+    ("monthly", "monthly", None),
 )
 # Published weekly request quotas (Kimi Code membership docs 2026-08-25). 5h cap is 200 for all tiers.
 KIMI_WEEKLY_PLANS: dict[float, str] = {
@@ -3254,6 +3257,31 @@ def _pace_iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def subtract_one_calendar_month(dt: datetime) -> datetime:
+    """Same clock time one calendar month earlier; day clamped to month length.
+
+    Reset on 31.03 → previous 28.02 (or 29.02 in a leap year).
+    """
+    year = dt.year
+    month = dt.month - 1
+    if month < 1:
+        month = 12
+        year -= 1
+    max_day = calendar.monthrange(year, month)[1]
+    return dt.replace(year=year, month=month, day=min(dt.day, max_day))
+
+
+def compute_monthly_window_minutes(next_reset_at: Any) -> int | None:
+    reset_dt = parse_pace_datetime(next_reset_at)
+    if reset_dt is None:
+        return None
+    start = subtract_one_calendar_month(reset_dt)
+    minutes = (reset_dt - start).total_seconds() / 60.0
+    if minutes <= 0:
+        return None
+    return int(round(minutes))
+
+
 def parse_pace_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         if value.tzinfo is None:
@@ -3364,10 +3392,20 @@ def build_pace_payload(
         probed_at = acc.get("probed_at")
         lanes: list[dict[str, Any]] = []
         for cache_key, window_label, minutes in PACE_WINDOW_SPECS:
+            window_data = acc.get(cache_key)
+            resolved_minutes = minutes
+            if resolved_minutes is None:
+                if not isinstance(window_data, dict):
+                    continue
+                resolved_minutes = compute_monthly_window_minutes(
+                    window_data.get("next_reset_at")
+                )
+                if resolved_minutes is None:
+                    continue
             lane = compute_pace_lane(
                 window_label,
-                minutes,
-                acc.get(cache_key),
+                resolved_minutes,
+                window_data,
                 now_dt,
                 probed_at,
             )
