@@ -35,7 +35,7 @@ Browser → Traefik (usage.ragpt.ru)
 - `GET /api/providers` — метаданные источников
 - `GET /api/wallets` — DeepSeek + OpenRouter + Z.AI + Command Code + Kimi + OpenCode Go
 - `GET /api/quota` — кеш последних wallet-проб
-- `GET /api/pace` — темп квот: для каждого аккаунта с окнами (session=5ч/300 мин, weekly=10080 мин) считает `norm_percent` (доля окна к `next_reset_at`), `delta_pp`, `pace` (ok <=5пп, warn <=20пп, danger >20пп — зеркало пилюль UI), `cooldown_minutes`, `data_age_seconds`; аккаунты без окон — в `no_window` (честно, без выдуманных данных). Панель «Темп квот» на главной рисует это двумя SVG-диагоналями (точка выше диагонали = обгон календаря); числа считает сервер, JS не пересчитывает.
+- `GET /api/pace` — темп квот: для каждого аккаунта с окнами (session=5ч/300 мин, weekly=10080 мин, monthly=next_reset_at − 1 календарный месяц) считает `norm_percent` (доля окна к `next_reset_at`), `delta_pp`, `pace` (ok <=5пп, warn <=20пп, danger >20пп — зеркало пилюль UI), `cooldown_minutes`, `data_age_seconds`; аккаунты без окон — в `no_window` (честно, без выдуманных данных). Панель «Темп квот» на главной рисует это SVG-диагоналями по числу окон (точка выше диагонали = обгон календаря); числа считает сервер, JS не пересчитывает.
 - `POST /api/refresh` — принудительное обновление проб
 
 `GET /api/summary` также отдаёт `site_title` и `enabled_providers` (из env `SITE_TITLE` / `PROVIDERS`). Пустые значения = текущее поведение: заголовок «Мои подписки» и все 6 провайдеров. `display_tz` / `display_tz_label` / `hide_partial_spend_chips` — пояс UI (дефолт UTC; инстанс Алана: `Europe/Moscow` / МСК, без чипов snapshot 24ч/7д).
